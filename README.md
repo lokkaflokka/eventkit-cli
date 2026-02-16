@@ -14,11 +14,13 @@ eventkit addresses these with **post-save verification**, **dedup-safe adds**, a
 
 ## Features
 
-- **6 commands**: `list`, `add`, `complete`, `edit`, `set-recurrence`, `delete`
+- **7 commands**: `list`, `add`, `complete`, `move`, `edit`, `set-recurrence`, `delete`
 - **Post-save verification**: Every mutation re-fetches from the store and confirms the change persisted
 - **Dedup-safe adds**: Skips creation if an incomplete reminder with the same title exists (`--force` to override)
 - **Dry-run on all mutations**: `--dry-run` previews what would happen without saving
 - **Double-recurrence protection**: `set-recurrence` refuses to add a rule if one already exists
+- **Date-range filtering**: `list --due-before` / `--due-after` for scoped queries (day-level, composable)
+- **Cross-list move**: `move` atomically creates in target + completes in source with verification
 - **Structured JSON output**: `list --json` produces automation-friendly JSON
 - **Body-file support**: `--body-file PATH` reads note content from a file — useful for piping multiline content
 - **Zero external dependencies**: Only Foundation + EventKit. Builds anywhere with Xcode.
@@ -45,6 +47,9 @@ Requires macOS 14+ and Xcode command line tools. On first run, macOS will prompt
 eventkit list "My List"
 eventkit list "My List" --json
 eventkit list "My List" --json --completed
+eventkit list "My List" --due-before 2026-02-20      # items due Feb 19 or earlier
+eventkit list "My List" --due-after 2026-02-16       # items due Feb 17 or later
+eventkit list "My List" --due-before 2026-02-23 --due-after 2026-02-16  # date range
 
 # Add a reminder
 eventkit add "My List" "Buy groceries"
@@ -54,6 +59,11 @@ eventkit add "My List" "Buy groceries" --dry-run  # preview only
 
 # Complete a reminder
 eventkit complete "My List" "Buy groceries"
+
+# Move between lists (atomic: create in target + complete in source)
+eventkit move Inbox Personal "Buy groceries" --due 2026-02-20
+eventkit move Inbox Strategic "Review proposal" --body "Updated context"
+eventkit move Inbox Personal "Quick task" --dry-run  # preview only
 
 # Edit fields selectively
 eventkit edit "My List" "File taxes" --due 2026-04-01

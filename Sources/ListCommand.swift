@@ -4,16 +4,19 @@ import Foundation
 func runList(args: [String]) {
     let positional = positionalArgs(
         from: args,
+        valueFlags: ["--due-before", "--due-after"],
         boolFlags: ["--json", "--completed"]
     )
 
     guard let listName = positional.first else {
-        stderrPrint("Usage: eventkit list <list> [--json] [--completed]")
+        stderrPrint("Usage: eventkit list <list> [--json] [--completed] [--due-before YYYY-MM-DD] [--due-after YYYY-MM-DD]")
         exit(1)
     }
 
     let jsonMode = hasFlag("--json", in: args)
     let includeCompleted = hasFlag("--completed", in: args)
+    let dueBeforeStr = extractFlag("--due-before", from: args)
+    let dueAfterStr = extractFlag("--due-after", from: args)
 
     let store = getAuthorizedStore()
     let calendar = findList(store: store, name: listName)
@@ -22,6 +25,41 @@ func runList(args: [String]) {
     // Filter: default is incomplete only
     if !includeCompleted {
         reminders = reminders.filter { !$0.isCompleted }
+    }
+
+    // Filter by date range (day-level comparison)
+    let cal = Calendar.current
+    if let beforeStr = dueBeforeStr {
+        guard let beforeComps = parseDateComponents(beforeStr) else {
+            stderrPrint("Error: Invalid --due-before date '\(beforeStr)'. Use YYYY-MM-DD.")
+            exit(1)
+        }
+        guard let beforeDate = cal.date(from: beforeComps) else {
+            stderrPrint("Error: Cannot resolve --due-before date '\(beforeStr)'.")
+            exit(1)
+        }
+        let beforeDay = cal.startOfDay(for: beforeDate)
+        reminders = reminders.filter { r in
+            guard let dueComps = r.dueDateComponents,
+                  let dueDate = cal.date(from: dueComps) else { return false }
+            return cal.startOfDay(for: dueDate) < beforeDay
+        }
+    }
+    if let afterStr = dueAfterStr {
+        guard let afterComps = parseDateComponents(afterStr) else {
+            stderrPrint("Error: Invalid --due-after date '\(afterStr)'. Use YYYY-MM-DD.")
+            exit(1)
+        }
+        guard let afterDate = cal.date(from: afterComps) else {
+            stderrPrint("Error: Cannot resolve --due-after date '\(afterStr)'.")
+            exit(1)
+        }
+        let afterDay = cal.startOfDay(for: afterDate)
+        reminders = reminders.filter { r in
+            guard let dueComps = r.dueDateComponents,
+                  let dueDate = cal.date(from: dueComps) else { return false }
+            return cal.startOfDay(for: dueDate) > afterDay
+        }
     }
 
     // Sort by due date ascending, no-date items last
