@@ -27,14 +27,13 @@ eventkit addresses these with **post-save verification**, **dedup-safe adds**, a
 ## Install
 
 ```bash
-# Clone and install
+# Homebrew
+brew install lokkaflokka/tap/eventkit-cli
+
+# Or from source
 git clone https://github.com/lokkaflokka/eventkit-cli.git
 cd eventkit-cli
 make install
-
-# Or manually
-swift build -c release --build-path /tmp/eventkit-build
-cp /tmp/eventkit-build/release/eventkit ~/.local/bin/
 ```
 
 Requires macOS 14+ and Xcode command line tools. On first run, macOS will prompt for Reminders access.
