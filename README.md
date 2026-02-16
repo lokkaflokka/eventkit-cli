@@ -28,7 +28,7 @@ eventkit addresses these with **post-save verification**, **dedup-safe adds**, a
 
 ```bash
 # Clone and install
-git clone https://github.com/yourusername/eventkit-cli.git
+git clone https://github.com/lokkaflokka/eventkit-cli.git
 cd eventkit-cli
 make install
 
