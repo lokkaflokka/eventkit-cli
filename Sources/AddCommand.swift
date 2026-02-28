@@ -2,14 +2,33 @@ import EventKit
 import Foundation
 
 func runAdd(args: [String]) {
+    if hasFlag("--help", in: args) || hasFlag("-h", in: args) {
+        print("""
+        Usage: eventkit add <list> <title> [options]
+
+        Options:
+          --due YYYY-MM-DD       Due date
+          --time HH:MM           Due time (default 09:00)
+          --body TEXT             Note body (alias: --notes)
+          --notes TEXT            Alias for --body
+          --body-file PATH       Read body from file
+          --recurrence FREQ      Recurrence: daily, weekly, monthly, yearly
+          --interval N           Recurrence interval (default 1)
+          --force                Create even if duplicate exists
+          --dry-run              Preview without saving
+          --help, -h             Show this help
+        """)
+        exit(0)
+    }
+
     let positional = positionalArgs(
         from: args,
-        valueFlags: ["--due", "--time", "--body", "--body-file", "--recurrence", "--interval"],
+        valueFlags: ["--due", "--time", "--body", "--notes", "--body-file", "--recurrence", "--interval"],
         boolFlags: ["--dry-run", "--force"]
     )
 
     guard positional.count >= 2 else {
-        stderrPrint("Usage: eventkit add <list> <title> [--due YYYY-MM-DD] [--time HH:MM] [--body TEXT | --body-file PATH] [--recurrence FREQ] [--interval N] [--force] [--dry-run]")
+        stderrPrint("Usage: eventkit add <list> <title> [--due YYYY-MM-DD] [--time HH:MM] [--body TEXT | --notes TEXT | --body-file PATH] [--recurrence FREQ] [--interval N] [--force] [--dry-run]")
         exit(1)
     }
 
@@ -26,7 +45,7 @@ func runAdd(args: [String]) {
         }
         body = contents.trimmingCharacters(in: .newlines)
     } else {
-        body = extractFlag("--body", from: args)
+        body = extractFlag(anyOf: ["--body", "--notes"], from: args)
     }
     let recurrenceStr = extractFlag("--recurrence", from: args)
     let intervalStr = extractFlag("--interval", from: args)
@@ -35,13 +54,35 @@ func runAdd(args: [String]) {
 
     let store = getAuthorizedStore()
     let calendar = findList(store: store, name: listName)
+    let reminders = fetchReminders(store: store, in: [calendar])
+
+    let result = executeAdd(
+        store: store, calendar: calendar, reminders: reminders,
+        title: title, dueStr: dueStr, timeStr: timeStr, body: body,
+        recurrenceStr: recurrenceStr, intervalStr: intervalStr,
+        force: force, dryRun: dryRun, skipVerify: false
+    )
+
+    if result.success {
+        print(result.message)
+    } else {
+        stderrPrint(result.message)
+        exit(7)
+    }
+}
+
+func executeAdd(
+    store: EKEventStore, calendar: EKCalendar, reminders: [EKReminder],
+    title: String, dueStr: String?, timeStr: String?, body: String?,
+    recurrenceStr: String?, intervalStr: String?,
+    force: Bool, dryRun: Bool, skipVerify: Bool
+) -> OperationResult {
+    let listName = calendar.title
 
     // Dedup check
     if !force {
-        let existing = fetchReminders(store: store, in: [calendar])
-        if existing.contains(where: { $0.title == title && !$0.isCompleted }) {
-            print("SKIP (exists): '\(title)' already exists incomplete in '\(listName)'. Use --force to override.")
-            exit(0)
+        if reminders.contains(where: { $0.title == title && !$0.isCompleted }) {
+            return OperationResult(success: true, message: "SKIP (exists): '\(title)' already exists incomplete in '\(listName)'. Use --force to override.")
         }
     }
 
@@ -49,8 +90,7 @@ func runAdd(args: [String]) {
     var dueDateComponents: DateComponents?
     if let dueStr = dueStr {
         guard let components = parseDateComponents(dueStr, time: timeStr) else {
-            stderrPrint("Error: Invalid date '\(dueStr)' or time '\(timeStr ?? "")'.")
-            exit(1)
+            return OperationResult(success: false, message: "Error: Invalid date '\(dueStr)' or time '\(timeStr ?? "")'.")
         }
         dueDateComponents = components
     }
@@ -62,13 +102,11 @@ func runAdd(args: [String]) {
     var recurrenceRule: EKRecurrenceRule?
     if let recurrenceStr = recurrenceStr {
         guard let freq = frequencyMap[recurrenceStr.lowercased()] else {
-            stderrPrint("Error: Invalid frequency '\(recurrenceStr)'. Must be: daily, weekly, monthly, yearly.")
-            exit(1)
+            return OperationResult(success: false, message: "Error: Invalid frequency '\(recurrenceStr)'. Must be: daily, weekly, monthly, yearly.")
         }
         let interval = Int(intervalStr ?? "1") ?? 1
         guard interval > 0 else {
-            stderrPrint("Error: Interval must be a positive integer.")
-            exit(1)
+            return OperationResult(success: false, message: "Error: Interval must be a positive integer.")
         }
         recurrenceRule = EKRecurrenceRule(recurrenceWith: freq, interval: interval, end: nil)
     }
@@ -83,9 +121,8 @@ func runAdd(args: [String]) {
         if let recurrenceStr = recurrenceStr {
             desc += " [recur: \(recurrenceStr) x\(intervalStr ?? "1")]"
         }
-        print(desc)
-        print("No changes saved.")
-        exit(0)
+        desc += "\nNo changes saved."
+        return OperationResult(success: true, message: desc)
     }
 
     // Create reminder
@@ -105,19 +142,24 @@ func runAdd(args: [String]) {
     do {
         try store.save(reminder, commit: true)
     } catch {
-        stderrPrint("Error: Failed to save reminder: \(error.localizedDescription)")
-        exit(7)
+        return OperationResult(success: false, message: "Error: Failed to save reminder: \(error.localizedDescription)")
     }
 
     // Verify
-    if verifyReminderExists(store: store, calendar: calendar, title: title) {
-        var desc = "Created '\(title)' in '\(listName)'"
-        if let dueStr = dueStr { desc += " due \(dueStr)" }
-        if recurrenceRule != nil { desc += " [recurrence set]" }
-        print(desc)
-        print("Verified: reminder persisted.")
-    } else {
-        stderrPrint("Warning: Reminder was saved but verification failed \u{2014} could not find '\(title)' in '\(listName)'.")
-        exit(7)
+    if !skipVerify {
+        if verifyReminderExists(store: store, calendar: calendar, title: title) {
+            var desc = "Created '\(title)' in '\(listName)'"
+            if let dueStr = dueStr { desc += " due \(dueStr)" }
+            if recurrenceRule != nil { desc += " [recurrence set]" }
+            desc += "\nVerified: reminder persisted."
+            return OperationResult(success: true, message: desc)
+        } else {
+            return OperationResult(success: false, message: "Warning: Reminder was saved but verification failed \u{2014} could not find '\(title)' in '\(listName)'.")
+        }
     }
+
+    var desc = "Created '\(title)' in '\(listName)'"
+    if let dueStr = dueStr { desc += " due \(dueStr)" }
+    if recurrenceRule != nil { desc += " [recurrence set]" }
+    return OperationResult(success: true, message: desc)
 }

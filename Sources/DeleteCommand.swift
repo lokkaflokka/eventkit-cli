@@ -2,41 +2,74 @@ import EventKit
 import Foundation
 
 func runDelete(args: [String]) {
-    let positional = positionalArgs(from: args, boolFlags: ["--dry-run"])
+    if hasFlag("--help", in: args) || hasFlag("-h", in: args) {
+        print("""
+        Usage: eventkit delete <list> <title> [options]
 
-    guard positional.count >= 2 else {
-        stderrPrint("Usage: eventkit delete <list> <title> [--dry-run]")
+        Options:
+          --id ID          Delete by reminder ID instead of title
+          --dry-run        Preview without saving
+          --help, -h       Show this help
+
+        When --id is provided, <title> is optional.
+        """)
+        exit(0)
+    }
+
+    let positional = positionalArgs(from: args, valueFlags: ["--id"], boolFlags: ["--dry-run"])
+    let idFlag = extractFlag("--id", from: args)
+
+    guard positional.count >= 2 || (positional.count >= 1 && idFlag != nil) else {
+        stderrPrint("Usage: eventkit delete <list> <title> [--id ID] [--dry-run]")
         exit(1)
     }
 
     let listName = positional[0]
-    let title = positional[1]
+    let titleArg: String? = positional.count >= 2 ? positional[1] : nil
     let dryRun = hasFlag("--dry-run", in: args)
 
     let store = getAuthorizedStore()
     let calendar = findList(store: store, name: listName)
     let reminders = fetchReminders(store: store, in: [calendar])
-    let target = findReminder(in: reminders, title: title)
+    let target = resolveReminder(in: reminders, id: idFlag, title: titleArg)
+
+    let result = executeDelete(
+        store: store, calendar: calendar, target: target,
+        dryRun: dryRun, skipVerify: false
+    )
+
+    if result.success {
+        print(result.message)
+    } else {
+        stderrPrint(result.message)
+        exit(7)
+    }
+}
+
+func executeDelete(
+    store: EKEventStore, calendar: EKCalendar, target: EKReminder,
+    dryRun: Bool, skipVerify: Bool
+) -> OperationResult {
+    let listName = calendar.title
+    let title = target.title ?? "(untitled)"
 
     if dryRun {
-        print("DRY RUN \u{2014} would delete '\(target.title ?? title)' from '\(listName)'.")
-        print("No changes saved.")
-        exit(0)
+        return OperationResult(success: true, message: "DRY RUN \u{2014} would delete '\(title)' from '\(listName)'.\nNo changes saved.")
     }
 
     do {
         try store.remove(target, commit: true)
     } catch {
-        stderrPrint("Error: Failed to delete reminder: \(error.localizedDescription)")
-        exit(7)
+        return OperationResult(success: false, message: "Error: Failed to delete reminder: \(error.localizedDescription)")
     }
 
-    // Verify it's gone
-    if verifyReminderGone(store: store, calendar: calendar, title: target.title ?? title) {
-        print("Deleted '\(target.title ?? title)' from '\(listName)'.")
-        print("Verified: reminder removed.")
-    } else {
-        stderrPrint("Warning: Delete was executed but verification failed \u{2014} reminder may still exist.")
-        exit(7)
+    if !skipVerify {
+        if verifyReminderGone(store: store, calendar: calendar, title: title) {
+            return OperationResult(success: true, message: "Deleted '\(title)' from '\(listName)'.\nVerified: reminder removed.")
+        } else {
+            return OperationResult(success: false, message: "Warning: Delete was executed but verification failed \u{2014} reminder may still exist.")
+        }
     }
+
+    return OperationResult(success: true, message: "Deleted '\(title)' from '\(listName)'.")
 }

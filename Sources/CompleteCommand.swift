@@ -2,26 +2,59 @@ import EventKit
 import Foundation
 
 func runComplete(args: [String]) {
-    let positional = positionalArgs(from: args, boolFlags: ["--dry-run"])
+    if hasFlag("--help", in: args) || hasFlag("-h", in: args) {
+        print("""
+        Usage: eventkit complete <list> <title> [options]
 
-    guard positional.count >= 2 else {
-        stderrPrint("Usage: eventkit complete <list> <title> [--dry-run]")
+        Options:
+          --id ID          Complete by reminder ID instead of title
+          --dry-run        Preview without saving
+          --help, -h       Show this help
+
+        When --id is provided, <title> is optional.
+        """)
+        exit(0)
+    }
+
+    let positional = positionalArgs(from: args, valueFlags: ["--id"], boolFlags: ["--dry-run"])
+    let idFlag = extractFlag("--id", from: args)
+
+    guard positional.count >= 2 || (positional.count >= 1 && idFlag != nil) else {
+        stderrPrint("Usage: eventkit complete <list> <title> [--id ID] [--dry-run]")
         exit(1)
     }
 
     let listName = positional[0]
-    let title = positional[1]
+    let titleArg: String? = positional.count >= 2 ? positional[1] : nil
     let dryRun = hasFlag("--dry-run", in: args)
 
     let store = getAuthorizedStore()
     let calendar = findList(store: store, name: listName)
     let reminders = fetchReminders(store: store, in: [calendar])
-    let target = findReminder(in: reminders, title: title)
+    let target = resolveReminder(in: reminders, id: idFlag, title: titleArg)
+
+    let result = executeComplete(
+        store: store, calendar: calendar, target: target,
+        dryRun: dryRun, skipVerify: false
+    )
+
+    if result.success {
+        print(result.message)
+    } else {
+        stderrPrint(result.message)
+        exit(7)
+    }
+}
+
+func executeComplete(
+    store: EKEventStore, calendar: EKCalendar, target: EKReminder,
+    dryRun: Bool, skipVerify: Bool
+) -> OperationResult {
+    let listName = calendar.title
+    let title = target.title ?? "(untitled)"
 
     if dryRun {
-        print("DRY RUN \u{2014} would complete '\(target.title ?? title)' in '\(listName)'.")
-        print("No changes saved.")
-        exit(0)
+        return OperationResult(success: true, message: "DRY RUN \u{2014} would complete '\(title)' in '\(listName)'.\nNo changes saved.")
     }
 
     target.isCompleted = true
@@ -30,16 +63,16 @@ func runComplete(args: [String]) {
     do {
         try store.save(target, commit: true)
     } catch {
-        stderrPrint("Error: Failed to save completion: \(error.localizedDescription)")
-        exit(7)
+        return OperationResult(success: false, message: "Error: Failed to save completion: \(error.localizedDescription)")
     }
 
-    // Verify
-    if verifyReminderCompleted(store: store, calendar: calendar, title: target.title ?? title) {
-        print("Completed '\(target.title ?? title)' in '\(listName)'.")
-        print("Verified: completion persisted.")
-    } else {
-        stderrPrint("Warning: Completion was saved but verification failed.")
-        exit(7)
+    if !skipVerify {
+        if verifyReminderCompleted(store: store, calendar: calendar, title: title) {
+            return OperationResult(success: true, message: "Completed '\(title)' in '\(listName)'.\nVerified: completion persisted.")
+        } else {
+            return OperationResult(success: false, message: "Warning: Completion was saved but verification failed.")
+        }
     }
+
+    return OperationResult(success: true, message: "Completed '\(title)' in '\(listName)'.")
 }

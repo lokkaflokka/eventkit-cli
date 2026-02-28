@@ -2,20 +2,42 @@ import EventKit
 import Foundation
 
 func runMove(args: [String]) {
+    if hasFlag("--help", in: args) || hasFlag("-h", in: args) {
+        print("""
+        Usage: eventkit move <source-list> <target-list> <title> [options]
+
+        Atomically moves a reminder: creates in target list, completes in source.
+
+        Options:
+          --id ID              Move by reminder ID instead of title
+          --due YYYY-MM-DD     Override due date (default: inherit from source)
+          --time HH:MM         Override due time
+          --body TEXT           Override note body (alias: --notes)
+          --notes TEXT          Alias for --body
+          --body-file PATH     Read body from file
+          --dry-run            Preview without saving
+          --help, -h           Show this help
+
+        When --id is provided, <title> is optional.
+        """)
+        exit(0)
+    }
+
     let positional = positionalArgs(
         from: args,
-        valueFlags: ["--due", "--time", "--body", "--body-file"],
+        valueFlags: ["--id", "--due", "--time", "--body", "--notes", "--body-file"],
         boolFlags: ["--dry-run"]
     )
+    let idFlag = extractFlag("--id", from: args)
 
-    guard positional.count >= 3 else {
-        stderrPrint("Usage: eventkit move <source-list> <target-list> <title> [--due YYYY-MM-DD] [--time HH:MM] [--body TEXT | --body-file PATH] [--dry-run]")
+    guard positional.count >= 3 || (positional.count >= 2 && idFlag != nil) else {
+        stderrPrint("Usage: eventkit move <source-list> <target-list> <title> [--id ID] [--due YYYY-MM-DD] [--time HH:MM] [--body TEXT | --notes TEXT | --body-file PATH] [--dry-run]")
         exit(1)
     }
 
     let sourceListName = positional[0]
     let targetListName = positional[1]
-    let title = positional[2]
+    let titleArg: String? = positional.count >= 3 ? positional[2] : nil
     let dueStr = extractFlag("--due", from: args)
     let timeStr = extractFlag("--time", from: args)
     let bodyFile = extractFlag("--body-file", from: args)
@@ -27,7 +49,7 @@ func runMove(args: [String]) {
         }
         body = contents.trimmingCharacters(in: .newlines)
     } else {
-        body = extractFlag("--body", from: args)
+        body = extractFlag(anyOf: ["--body", "--notes"], from: args)
     }
     let dryRun = hasFlag("--dry-run", in: args)
 
@@ -35,10 +57,31 @@ func runMove(args: [String]) {
     let sourceCalendar = findList(store: store, name: sourceListName)
     let targetCalendar = findList(store: store, name: targetListName)
 
-    // Find reminder in source (incomplete only)
     let sourceReminders = fetchReminders(store: store, in: [sourceCalendar])
-    let source = findReminder(in: sourceReminders, title: title)
-    let sourceTitle = source.title ?? title
+    let source = resolveReminder(in: sourceReminders, id: idFlag, title: titleArg)
+
+    let result = executeMove(
+        store: store, sourceCalendar: sourceCalendar, targetCalendar: targetCalendar,
+        source: source, dueStr: dueStr, timeStr: timeStr, body: body,
+        dryRun: dryRun, skipVerify: false
+    )
+
+    if result.success {
+        print(result.message)
+    } else {
+        stderrPrint(result.message)
+        exit(7)
+    }
+}
+
+func executeMove(
+    store: EKEventStore, sourceCalendar: EKCalendar, targetCalendar: EKCalendar,
+    source: EKReminder, dueStr: String?, timeStr: String?, body: String?,
+    dryRun: Bool, skipVerify: Bool
+) -> OperationResult {
+    let sourceListName = sourceCalendar.title
+    let targetListName = targetCalendar.title
+    let sourceTitle = source.title ?? "(untitled)"
 
     // Resolve body: flag override > copy from source
     let resolvedBody = body ?? source.notes
@@ -47,8 +90,7 @@ func runMove(args: [String]) {
     var resolvedDueComponents: DateComponents?
     if let dueStr = dueStr {
         guard let components = parseDateComponents(dueStr, time: timeStr) else {
-            stderrPrint("Error: Invalid date '\(dueStr)' or time '\(timeStr ?? "")'.")
-            exit(1)
+            return OperationResult(success: false, message: "Error: Invalid date '\(dueStr)' or time '\(timeStr ?? "")'.")
         }
         resolvedDueComponents = components
     } else {
@@ -58,8 +100,7 @@ func runMove(args: [String]) {
     // Dedup check in target (hard fail)
     let targetReminders = fetchReminders(store: store, in: [targetCalendar])
     if targetReminders.contains(where: { $0.title == sourceTitle && !$0.isCompleted }) {
-        stderrPrint("Error: '\(sourceTitle)' already exists incomplete in '\(targetListName)'. Remove it first.")
-        exit(5)
+        return OperationResult(success: false, message: "Error: '\(sourceTitle)' already exists incomplete in '\(targetListName)'. Remove it first.")
     }
 
     if dryRun {
@@ -71,9 +112,8 @@ func runMove(args: [String]) {
             desc += " due \(formatted) (inherited)"
         }
         if body != nil { desc += " (body overridden)" }
-        print(desc)
-        print("No changes saved.")
-        exit(0)
+        desc += "\nNo changes saved."
+        return OperationResult(success: true, message: desc)
     }
 
     // Create in target
@@ -88,14 +128,14 @@ func runMove(args: [String]) {
     do {
         try store.save(newReminder, commit: true)
     } catch {
-        stderrPrint("Error: Failed to create reminder in '\(targetListName)': \(error.localizedDescription)")
-        exit(7)
+        return OperationResult(success: false, message: "Error: Failed to create reminder in '\(targetListName)': \(error.localizedDescription)")
     }
 
     // Verify creation
-    guard verifyReminderExists(store: store, calendar: targetCalendar, title: sourceTitle) else {
-        stderrPrint("Error: Reminder was saved to '\(targetListName)' but verification failed.")
-        exit(7)
+    if !skipVerify {
+        guard verifyReminderExists(store: store, calendar: targetCalendar, title: sourceTitle) else {
+            return OperationResult(success: false, message: "Error: Reminder was saved to '\(targetListName)' but verification failed.")
+        }
     }
 
     // Complete in source
@@ -105,18 +145,17 @@ func runMove(args: [String]) {
     do {
         try store.save(source, commit: true)
     } catch {
-        stderrPrint("Error: Created in '\(targetListName)' but failed to complete in '\(sourceListName)': \(error.localizedDescription)")
-        stderrPrint("ACTION REQUIRED: Manually complete '\(sourceTitle)' in '\(sourceListName)'.")
-        exit(7)
+        return OperationResult(success: false, message: "Error: Created in '\(targetListName)' but failed to complete in '\(sourceListName)': \(error.localizedDescription)\nACTION REQUIRED: Manually complete '\(sourceTitle)' in '\(sourceListName)'.")
     }
 
     // Verify completion
-    if verifyReminderCompleted(store: store, calendar: sourceCalendar, title: sourceTitle) {
-        print("Moved '\(sourceTitle)' from '\(sourceListName)' to '\(targetListName)'.")
-        print("Verified: created in target, completed in source.")
-    } else {
-        stderrPrint("Warning: Created in '\(targetListName)' but completion verification failed in '\(sourceListName)'.")
-        stderrPrint("ACTION REQUIRED: Manually complete '\(sourceTitle)' in '\(sourceListName)'.")
-        exit(7)
+    if !skipVerify {
+        if verifyReminderCompleted(store: store, calendar: sourceCalendar, title: sourceTitle) {
+            return OperationResult(success: true, message: "Moved '\(sourceTitle)' from '\(sourceListName)' to '\(targetListName)'.\nVerified: created in target, completed in source.")
+        } else {
+            return OperationResult(success: false, message: "Warning: Created in '\(targetListName)' but completion verification failed in '\(sourceListName)'.\nACTION REQUIRED: Manually complete '\(sourceTitle)' in '\(sourceListName)'.")
+        }
     }
+
+    return OperationResult(success: true, message: "Moved '\(sourceTitle)' from '\(sourceListName)' to '\(targetListName)'.")
 }

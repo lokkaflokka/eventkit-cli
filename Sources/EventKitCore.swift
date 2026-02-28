@@ -20,6 +20,13 @@ func extractFlag(_ flag: String, from args: [String]) -> String? {
     return args[index + 1]
 }
 
+func extractFlag(anyOf flags: [String], from args: [String]) -> String? {
+    for flag in flags {
+        if let v = extractFlag(flag, from: args) { return v }
+    }
+    return nil
+}
+
 /// Strip known flags and their values from args, returning only positional args
 func positionalArgs(from args: [String], valueFlags: [String] = [], boolFlags: [String] = []) -> [String] {
     var result: [String] = []
@@ -64,6 +71,21 @@ func getAuthorizedStore() -> EKEventStore {
     return store
 }
 
+// MARK: - Operation result (for batch mode)
+
+struct OperationResult {
+    let success: Bool
+    let message: String
+}
+
+// MARK: - Reminder lookup result (for batch mode)
+
+enum ReminderLookupResult {
+    case found(EKReminder)
+    case notFound([String])      // incomplete titles for error message
+    case ambiguous([EKReminder]) // multiple matches
+}
+
 // MARK: - List / reminder lookup
 
 func findList(store: EKEventStore, name: String) -> EKCalendar {
@@ -96,27 +118,76 @@ func fetchReminders(store: EKEventStore, in calendars: [EKCalendar]) -> [EKRemin
     return reminders
 }
 
-/// Find a reminder by title: exact match first, then case-insensitive contains. Incomplete only.
-func findReminder(in reminders: [EKReminder], title: String) -> EKReminder {
+/// Non-exiting reminder lookup: exact match first, then case-insensitive contains with ambiguity detection.
+func lookupReminder(in reminders: [EKReminder], title: String) -> ReminderLookupResult {
     // Exact match, incomplete only
     if let exact = reminders.first(where: { $0.title == title && !$0.isCompleted }) {
-        return exact
+        return .found(exact)
     }
-    // Fallback: case-insensitive contains, incomplete only
-    if let partial = reminders.first(where: {
+    // Fallback: case-insensitive contains, incomplete only — collect ALL matches
+    let partials = reminders.filter {
         !$0.isCompleted && ($0.title?.localizedCaseInsensitiveContains(title) == true)
-    }) {
-        return partial
+    }
+    if partials.count == 1 {
+        return .found(partials[0])
+    }
+    if partials.count > 1 {
+        return .ambiguous(partials)
     }
     // Not found
     let incomplete = reminders.filter { !$0.isCompleted }.compactMap { $0.title }
-    stderrPrint("Error: No incomplete reminder matching '\(title)'.")
-    if incomplete.isEmpty {
-        stderrPrint("No incomplete reminders in this list.")
-    } else {
-        stderrPrint("Incomplete reminders: \(incomplete.joined(separator: ", "))")
+    return .notFound(incomplete)
+}
+
+/// Find a reminder by title: exact match first, then case-insensitive contains. Incomplete only.
+/// Exits on failure (not found or ambiguous).
+func findReminder(in reminders: [EKReminder], title: String) -> EKReminder {
+    switch lookupReminder(in: reminders, title: title) {
+    case .found(let reminder):
+        return reminder
+    case .ambiguous(let matches):
+        stderrPrint("Error: Ambiguous match for '\(title)'. Multiple reminders match:")
+        for m in matches {
+            let id = m.calendarItemExternalIdentifier ?? "?"
+            stderrPrint("  - \"\(m.title ?? "(untitled)")\" (id: \(id))")
+        }
+        stderrPrint("Use --id <id> to target a specific reminder.")
+        exit(5)
+    case .notFound(let incomplete):
+        stderrPrint("Error: No incomplete reminder matching '\(title)'.")
+        if incomplete.isEmpty {
+            stderrPrint("No incomplete reminders in this list.")
+        } else {
+            stderrPrint("Incomplete reminders: \(incomplete.joined(separator: ", "))")
+        }
+        exit(5)
     }
-    exit(5)
+}
+
+/// Find a reminder by calendarItemExternalIdentifier. Exits on failure.
+func findReminderByID(in reminders: [EKReminder], id: String) -> EKReminder {
+    guard let reminder = findReminderByIDOptional(in: reminders, id: id) else {
+        stderrPrint("Error: No reminder with id '\(id)'.")
+        exit(5)
+    }
+    return reminder
+}
+
+/// Find a reminder by calendarItemExternalIdentifier. Returns nil if not found.
+func findReminderByIDOptional(in reminders: [EKReminder], id: String) -> EKReminder? {
+    return reminders.first(where: { $0.calendarItemExternalIdentifier == id && !$0.isCompleted })
+}
+
+/// Convenience: route to findReminderByID or findReminder based on which is provided.
+func resolveReminder(in reminders: [EKReminder], id: String?, title: String?) -> EKReminder {
+    if let id = id {
+        return findReminderByID(in: reminders, id: id)
+    }
+    guard let title = title else {
+        stderrPrint("Error: Either --id or a title must be provided.")
+        exit(1)
+    }
+    return findReminder(in: reminders, title: title)
 }
 
 // MARK: - Date helpers

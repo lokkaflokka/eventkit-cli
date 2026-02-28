@@ -2,19 +2,42 @@ import EventKit
 import Foundation
 
 func runEdit(args: [String]) {
+    if hasFlag("--help", in: args) || hasFlag("-h", in: args) {
+        print("""
+        Usage: eventkit edit <list> <title> [options]
+               eventkit update <list> <title> [options]    (alias)
+
+        Options:
+          --id ID              Edit by reminder ID instead of title
+          --title NEW          Change the title
+          --due YYYY-MM-DD     Change the due date
+          --time HH:MM         Change the due time
+          --body TEXT           Change the note body (alias: --notes)
+          --notes TEXT          Alias for --body
+          --body-file PATH     Read body from file
+          --dry-run            Preview without saving
+          --help, -h           Show this help
+
+        When --id is provided, <title> is optional.
+        At least one edit flag (--title, --due, --time, --body) is required.
+        """)
+        exit(0)
+    }
+
     let positional = positionalArgs(
         from: args,
-        valueFlags: ["--title", "--due", "--time", "--body", "--body-file"],
+        valueFlags: ["--id", "--title", "--due", "--time", "--body", "--notes", "--body-file"],
         boolFlags: ["--dry-run"]
     )
+    let idFlag = extractFlag("--id", from: args)
 
-    guard positional.count >= 2 else {
-        stderrPrint("Usage: eventkit edit <list> <title> [--title NEW] [--due YYYY-MM-DD] [--time HH:MM] [--body TEXT | --body-file PATH] [--dry-run]")
+    guard positional.count >= 2 || (positional.count >= 1 && idFlag != nil) else {
+        stderrPrint("Usage: eventkit edit <list> <title> [--id ID] [--title NEW] [--due YYYY-MM-DD] [--time HH:MM] [--body TEXT | --notes TEXT | --body-file PATH] [--dry-run]")
         exit(1)
     }
 
     let listName = positional[0]
-    let title = positional[1]
+    let titleArg: String? = positional.count >= 2 ? positional[1] : nil
     let newTitle = extractFlag("--title", from: args)
     let dueStr = extractFlag("--due", from: args)
     let timeStr = extractFlag("--time", from: args)
@@ -27,20 +50,47 @@ func runEdit(args: [String]) {
         }
         newBody = contents.trimmingCharacters(in: .newlines)
     } else {
-        newBody = extractFlag("--body", from: args)
+        newBody = extractFlag(anyOf: ["--body", "--notes"], from: args)
     }
     let dryRun = hasFlag("--dry-run", in: args)
 
     // Must have at least one edit
     if newTitle == nil && dueStr == nil && timeStr == nil && newBody == nil {
-        stderrPrint("Error: No edits specified. Use --title, --due, --time, or --body.")
+        stderrPrint("Error: No edits specified. Use --title, --due, --time, or --body/--notes.")
         exit(1)
     }
 
     let store = getAuthorizedStore()
     let calendar = findList(store: store, name: listName)
     let reminders = fetchReminders(store: store, in: [calendar])
-    let target = findReminder(in: reminders, title: title)
+    let target = resolveReminder(in: reminders, id: idFlag, title: titleArg)
+
+    let result = executeEdit(
+        store: store, calendar: calendar, target: target,
+        newTitle: newTitle, dueStr: dueStr, timeStr: timeStr, newBody: newBody,
+        dryRun: dryRun, skipVerify: false
+    )
+
+    if result.success {
+        print(result.message)
+    } else {
+        stderrPrint(result.message)
+        exit(7)
+    }
+}
+
+func executeEdit(
+    store: EKEventStore, calendar: EKCalendar, target: EKReminder,
+    newTitle: String?, dueStr: String?, timeStr: String?, newBody: String?,
+    dryRun: Bool, skipVerify: Bool
+) -> OperationResult {
+    let listName = calendar.title
+    let title = target.title ?? "(untitled)"
+
+    // Must have at least one edit
+    if newTitle == nil && dueStr == nil && timeStr == nil && newBody == nil {
+        return OperationResult(success: false, message: "Error: No edits specified.")
+    }
 
     var changes: [String] = []
 
@@ -57,10 +107,10 @@ func runEdit(args: [String]) {
     }
 
     if dryRun {
-        print("DRY RUN \u{2014} would edit '\(target.title ?? title)' in '\(listName)':")
-        for change in changes { print("  \(change)") }
-        print("No changes saved.")
-        exit(0)
+        var msg = "DRY RUN \u{2014} would edit '\(title)' in '\(listName)':"
+        for change in changes { msg += "\n  \(change)" }
+        msg += "\nNo changes saved."
+        return OperationResult(success: true, message: msg)
     }
 
     // Apply edits
@@ -69,34 +119,29 @@ func runEdit(args: [String]) {
     }
 
     if let dueStr = dueStr {
-        // When --due is provided, use it (with optional --time, defaulting to existing time or 09:00)
         let effectiveTime: String?
         if let timeStr = timeStr {
             effectiveTime = timeStr
         } else if let existing = target.dueDateComponents, let h = existing.hour, let m = existing.minute {
             effectiveTime = String(format: "%02d:%02d", h, m)
         } else {
-            effectiveTime = nil // parseDateComponents defaults to 09:00
+            effectiveTime = nil
         }
         guard let components = parseDateComponents(dueStr, time: effectiveTime) else {
-            stderrPrint("Error: Invalid date '\(dueStr)'.")
-            exit(1)
+            return OperationResult(success: false, message: "Error: Invalid date '\(dueStr)'.")
         }
         target.dueDateComponents = components
     } else if let timeStr = timeStr {
-        // Time-only edit: keep existing date, change time
         if var existing = target.dueDateComponents {
             let timeParts = timeStr.split(separator: ":").compactMap { Int($0) }
             guard timeParts.count == 2 else {
-                stderrPrint("Error: Invalid time '\(timeStr)'. Use HH:MM.")
-                exit(1)
+                return OperationResult(success: false, message: "Error: Invalid time '\(timeStr)'. Use HH:MM.")
             }
             existing.hour = timeParts[0]
             existing.minute = timeParts[1]
             target.dueDateComponents = existing
         } else {
-            stderrPrint("Error: Cannot set time without a due date. Use --due as well.")
-            exit(1)
+            return OperationResult(success: false, message: "Error: Cannot set time without a due date. Use --due as well.")
         }
     }
 
@@ -107,18 +152,22 @@ func runEdit(args: [String]) {
     do {
         try store.save(target, commit: true)
     } catch {
-        stderrPrint("Error: Failed to save edit: \(error.localizedDescription)")
-        exit(7)
+        return OperationResult(success: false, message: "Error: Failed to save edit: \(error.localizedDescription)")
     }
 
-    // Verify — use new title if it was changed
     let verifyTitle = newTitle ?? target.title ?? title
-    if verifyReminderExists(store: store, calendar: calendar, title: verifyTitle) {
-        print("Edited '\(title)' in '\(listName)':")
-        for change in changes { print("  \(change)") }
-        print("Verified: edit persisted.")
-    } else {
-        stderrPrint("Warning: Edit was saved but verification failed.")
-        exit(7)
+    if !skipVerify {
+        if verifyReminderExists(store: store, calendar: calendar, title: verifyTitle) {
+            var msg = "Edited '\(title)' in '\(listName)':"
+            for change in changes { msg += "\n  \(change)" }
+            msg += "\nVerified: edit persisted."
+            return OperationResult(success: true, message: msg)
+        } else {
+            return OperationResult(success: false, message: "Warning: Edit was saved but verification failed.")
+        }
     }
+
+    var msg = "Edited '\(title)' in '\(listName)':"
+    for change in changes { msg += "\n  \(change)" }
+    return OperationResult(success: true, message: msg)
 }

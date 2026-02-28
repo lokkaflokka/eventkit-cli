@@ -2,6 +2,20 @@ import EventKit
 import Foundation
 
 func runList(args: [String]) {
+    if hasFlag("--help", in: args) || hasFlag("-h", in: args) {
+        print("""
+        Usage: eventkit list <list> [options]
+
+        Options:
+          --json               Output as structured JSON
+          --completed          Include completed reminders
+          --due-before DATE    Only reminders due before DATE (YYYY-MM-DD)
+          --due-after DATE     Only reminders due after DATE (YYYY-MM-DD)
+          --help, -h           Show this help
+        """)
+        exit(0)
+    }
+
     let positional = positionalArgs(
         from: args,
         valueFlags: ["--due-before", "--due-after"],
