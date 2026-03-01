@@ -6,7 +6,7 @@ func runMove(args: [String]) {
         print("""
         Usage: eventkit move <source-list> <target-list> <title> [options]
 
-        Atomically moves a reminder: creates in target list, completes in source.
+        Moves a reminder between lists, preserving all properties (recurrence, priority, alarms).
 
         Options:
           --id ID              Move by reminder ID instead of title
@@ -83,79 +83,85 @@ func executeMove(
     let targetListName = targetCalendar.title
     let sourceTitle = source.title ?? "(untitled)"
 
-    // Resolve body: flag override > copy from source
-    let resolvedBody = body ?? source.notes
-
-    // Resolve due date: flag override > inherit source > nil
-    var resolvedDueComponents: DateComponents?
-    if let dueStr = dueStr {
-        guard let components = parseDateComponents(dueStr, time: timeStr) else {
-            return OperationResult(success: false, message: "Error: Invalid date '\(dueStr)' or time '\(timeStr ?? "")'.")
-        }
-        resolvedDueComponents = components
-    } else {
-        resolvedDueComponents = source.dueDateComponents
+    // Same-list guard
+    if sourceCalendar.calendarIdentifier == targetCalendar.calendarIdentifier {
+        return OperationResult(success: false, message: "Error: '\(sourceTitle)' is already in '\(targetListName)'.")
     }
 
-    // Dedup check in target (hard fail)
-    let targetReminders = fetchReminders(store: store, in: [targetCalendar])
-    if targetReminders.contains(where: { $0.title == sourceTitle && !$0.isCompleted }) {
-        return OperationResult(success: false, message: "Error: '\(sourceTitle)' already exists incomplete in '\(targetListName)'. Remove it first.")
-    }
+    let hasRecurrence = source.recurrenceRules != nil && !source.recurrenceRules!.isEmpty
 
     if dryRun {
         var desc = "DRY RUN \u{2014} would move '\(sourceTitle)' from '\(sourceListName)' to '\(targetListName)'"
         if let dueStr = dueStr {
             desc += " due \(dueStr)"
             if let timeStr = timeStr { desc += " at \(timeStr)" }
-        } else if let dueComps = resolvedDueComponents, let formatted = formatHumanDate(dueComps) {
-            desc += " due \(formatted) (inherited)"
+        } else if let timeStr = timeStr {
+            desc += " time \(timeStr)"
         }
         if body != nil { desc += " (body overridden)" }
+        if hasRecurrence { desc += " [recurrence preserved]" }
         desc += "\nNo changes saved."
         return OperationResult(success: true, message: desc)
     }
 
-    // Create in target
-    let newReminder = EKReminder(eventStore: store)
-    newReminder.title = sourceTitle
-    newReminder.calendar = targetCalendar
-    newReminder.notes = resolvedBody
-    if let dueComps = resolvedDueComponents {
-        newReminder.dueDateComponents = dueComps
-    }
+    // Reassign calendar (true move — preserves recurrence, priority, alarms, start date)
+    source.calendar = targetCalendar
 
-    do {
-        try store.save(newReminder, commit: true)
-    } catch {
-        return OperationResult(success: false, message: "Error: Failed to create reminder in '\(targetListName)': \(error.localizedDescription)")
-    }
-
-    // Verify creation
-    if !skipVerify {
-        guard verifyReminderExists(store: store, calendar: targetCalendar, title: sourceTitle) else {
-            return OperationResult(success: false, message: "Error: Reminder was saved to '\(targetListName)' but verification failed.")
+    // Apply overrides only when flags provided
+    if let dueStr = dueStr {
+        let effectiveTime: String?
+        if let timeStr = timeStr {
+            effectiveTime = timeStr
+        } else if let existing = source.dueDateComponents, let h = existing.hour, let m = existing.minute {
+            effectiveTime = String(format: "%02d:%02d", h, m)
+        } else {
+            effectiveTime = nil
+        }
+        guard let components = parseDateComponents(dueStr, time: effectiveTime) else {
+            return OperationResult(success: false, message: "Error: Invalid date '\(dueStr)'.")
+        }
+        source.dueDateComponents = components
+    } else if let timeStr = timeStr {
+        if var existing = source.dueDateComponents {
+            let timeParts = timeStr.split(separator: ":").compactMap { Int($0) }
+            guard timeParts.count == 2 else {
+                return OperationResult(success: false, message: "Error: Invalid time '\(timeStr)'. Use HH:MM.")
+            }
+            existing.hour = timeParts[0]
+            existing.minute = timeParts[1]
+            source.dueDateComponents = existing
+        } else {
+            return OperationResult(success: false, message: "Error: Cannot set time without a due date. Use --due as well.")
         }
     }
 
-    // Complete in source
-    source.isCompleted = true
-    source.completionDate = Date()
+    if let body = body {
+        source.notes = body
+    }
 
     do {
         try store.save(source, commit: true)
     } catch {
-        return OperationResult(success: false, message: "Error: Created in '\(targetListName)' but failed to complete in '\(sourceListName)': \(error.localizedDescription)\nACTION REQUIRED: Manually complete '\(sourceTitle)' in '\(sourceListName)'.")
+        return OperationResult(success: false, message: "Error: Failed to move reminder to '\(targetListName)': \(error.localizedDescription)")
     }
 
-    // Verify completion
+    // Verify: exists in target, gone from source
     if !skipVerify {
-        if verifyReminderCompleted(store: store, calendar: sourceCalendar, title: sourceTitle) {
-            return OperationResult(success: true, message: "Moved '\(sourceTitle)' from '\(sourceListName)' to '\(targetListName)'.\nVerified: created in target, completed in source.")
+        let inTarget = verifyReminderExists(store: store, calendar: targetCalendar, title: sourceTitle)
+        let goneFromSource = verifyReminderGone(store: store, calendar: sourceCalendar, title: sourceTitle)
+        if inTarget && goneFromSource {
+            var msg = "Moved '\(sourceTitle)' from '\(sourceListName)' to '\(targetListName)'."
+            if hasRecurrence { msg += " [recurrence preserved]" }
+            msg += "\nVerified: in target, gone from source."
+            return OperationResult(success: true, message: msg)
+        } else if inTarget {
+            return OperationResult(success: true, message: "Moved '\(sourceTitle)' to '\(targetListName)'. (source verification inconclusive)")
         } else {
-            return OperationResult(success: false, message: "Warning: Created in '\(targetListName)' but completion verification failed in '\(sourceListName)'.\nACTION REQUIRED: Manually complete '\(sourceTitle)' in '\(sourceListName)'.")
+            return OperationResult(success: false, message: "Warning: Save succeeded but verification failed \u{2014} reminder may not have moved.")
         }
     }
 
-    return OperationResult(success: true, message: "Moved '\(sourceTitle)' from '\(sourceListName)' to '\(targetListName)'.")
+    var msg = "Moved '\(sourceTitle)' from '\(sourceListName)' to '\(targetListName)'."
+    if hasRecurrence { msg += " [recurrence preserved]" }
+    return OperationResult(success: true, message: msg)
 }
