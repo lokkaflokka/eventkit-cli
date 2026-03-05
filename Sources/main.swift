@@ -1,6 +1,6 @@
 import Foundation
 
-let version = "1.3.1"
+let version = "1.3.2"
 let args = Array(CommandLine.arguments.dropFirst())
 
 guard let command = args.first else {

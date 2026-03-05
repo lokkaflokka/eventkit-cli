@@ -205,14 +205,19 @@ func parseDateComponents(_ dateStr: String, time: String? = nil) -> DateComponen
         timeParts = [9, 0]
     }
 
-    var components = DateComponents()
-    components.year = parts[0]
-    components.month = parts[1]
-    components.day = parts[2]
-    components.hour = timeParts[0]
-    components.minute = timeParts[1]
-    components.second = 0
-    return components
+    var raw = DateComponents()
+    raw.year = parts[0]
+    raw.month = parts[1]
+    raw.day = parts[2]
+    raw.hour = timeParts[0]
+    raw.minute = timeParts[1]
+    raw.second = 0
+
+    // Roundtrip through Calendar to produce properly-contextualized components
+    // that Apple Reminders can interpret correctly
+    let calendar = Calendar.current
+    guard let date = calendar.date(from: raw) else { return nil }
+    return calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
 }
 
 /// Format DateComponents for human-readable output (e.g., "Feb 17, 2026 at 9:00 AM")
@@ -231,7 +236,118 @@ func formatHumanDate(_ components: DateComponents?) -> String? {
     return formatter.string(from: date)
 }
 
-// MARK: - Mutation verification
+// MARK: - Field verification
+
+struct FieldVerification {
+    var expectedDate: DateComponents?
+    var expectedTitle: String?
+    var expectedNotes: String?
+}
+
+/// Re-fetch a reminder by calendarItemExternalIdentifier and compare actual field values against expected.
+/// Returns (passed, mismatches) where mismatches lists human-readable descriptions of each mismatch.
+func verifyFields(
+    store: EKEventStore, calendar: EKCalendar,
+    reminderID: String, expected: FieldVerification
+) -> (passed: Bool, mismatches: [String]) {
+    let reminders = fetchReminders(store: store, in: [calendar])
+    guard let fresh = reminders.first(where: { $0.calendarItemExternalIdentifier == reminderID }) else {
+        return (false, ["reminder not found after save"])
+    }
+
+    var mismatches: [String] = []
+
+    if let expectedTitle = expected.expectedTitle {
+        if fresh.title != expectedTitle {
+            mismatches.append("title: expected '\(expectedTitle)', got '\(fresh.title ?? "(nil)")'")
+        }
+    }
+
+    if let expectedNotes = expected.expectedNotes {
+        if fresh.notes != expectedNotes {
+            let got = fresh.notes ?? "(nil)"
+            mismatches.append("notes: expected '\(expectedNotes.prefix(60))...', got '\(got.prefix(60))...'")
+        }
+    }
+
+    if let expectedDate = expected.expectedDate {
+        let actual = fresh.dueDateComponents
+        let fields: [(String, (DateComponents) -> Int?)] = [
+            ("year", { $0.year }), ("month", { $0.month }), ("day", { $0.day }),
+            ("hour", { $0.hour }), ("minute", { $0.minute }),
+        ]
+        for (name, getter) in fields {
+            let exp = getter(expectedDate)
+            let act = actual.flatMap(getter)
+            if exp != act {
+                mismatches.append("date.\(name): expected \(exp.map(String.init) ?? "nil"), got \(act.map(String.init) ?? "nil")")
+            }
+        }
+    }
+
+    return (mismatches.isEmpty, mismatches)
+}
+
+/// Delete a reminder and recreate it with the given fields. Returns the new reminder's ID or nil on failure.
+func recreateReminder(
+    store: EKEventStore, calendar: EKCalendar, target: EKReminder,
+    title: String, notes: String?, dueDateComponents: DateComponents?,
+    recurrenceRules: [EKRecurrenceRule]?, priority: Int
+) -> (success: Bool, newID: String?, message: String) {
+    // Capture all fields before deletion
+    let capturedTitle = title
+    let capturedNotes = notes
+    let capturedDue = dueDateComponents
+    let capturedRules = recurrenceRules
+    let capturedPriority = priority
+
+    // Delete the corrupted reminder
+    do {
+        try store.remove(target, commit: true)
+    } catch {
+        return (false, nil, "Failed to delete corrupted reminder: \(error.localizedDescription)")
+    }
+
+    // Create a new reminder with all captured fields
+    let newReminder = EKReminder(eventStore: store)
+    newReminder.title = capturedTitle
+    newReminder.calendar = calendar
+    newReminder.notes = capturedNotes
+    newReminder.priority = capturedPriority
+    if let due = capturedDue {
+        newReminder.dueDateComponents = due
+    }
+    if let rules = capturedRules {
+        for rule in rules {
+            newReminder.addRecurrenceRule(rule)
+        }
+    }
+
+    do {
+        try store.save(newReminder, commit: true)
+    } catch {
+        return (false, nil, "Deleted corrupted reminder but failed to recreate: \(error.localizedDescription)")
+    }
+
+    let newID = newReminder.calendarItemExternalIdentifier ?? ""
+
+    // Verify the recreated reminder
+    var expectedFields = FieldVerification()
+    expectedFields.expectedTitle = capturedTitle
+    if let due = capturedDue {
+        expectedFields.expectedDate = due
+    }
+    // Don't verify notes — they may be long and exact match is fragile
+
+    let (passed, mismatches) = verifyFields(store: store, calendar: calendar, reminderID: newID, expected: expectedFields)
+    if !passed {
+        return (false, newID, "Recreated but verification failed: \(mismatches.joined(separator: "; "))")
+    }
+
+    return (true, newID, "recreated successfully")
+}
+
+// MARK: - Mutation verification (legacy — title-only checks)
 
 /// Re-fetch reminders and verify a reminder with the given title exists (incomplete)
 func verifyReminderExists(store: EKEventStore, calendar: EKCalendar, title: String) -> Bool {

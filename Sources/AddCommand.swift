@@ -145,16 +145,38 @@ func executeAdd(
         return OperationResult(success: false, message: "Error: Failed to save reminder: \(error.localizedDescription)")
     }
 
-    // Verify
+    // Verify fields
     if !skipVerify {
-        if verifyReminderExists(store: store, calendar: calendar, title: title) {
+        let reminderID = reminder.calendarItemExternalIdentifier ?? ""
+        var expectedFields = FieldVerification()
+        expectedFields.expectedTitle = title
+        if let dueDateComponents = dueDateComponents {
+            expectedFields.expectedDate = dueDateComponents
+        }
+
+        let (passed, mismatches) = verifyFields(store: store, calendar: calendar, reminderID: reminderID, expected: expectedFields)
+        if passed {
             var desc = "Created '\(title)' in '\(listName)'"
             if let dueStr = dueStr { desc += " due \(dueStr)" }
             if recurrenceRule != nil { desc += " [recurrence set]" }
-            desc += "\nVerified: reminder persisted."
+            desc += "\nVerified: all fields correct."
             return OperationResult(success: true, message: desc)
         } else {
-            return OperationResult(success: false, message: "Warning: Reminder was saved but verification failed \u{2014} could not find '\(title)' in '\(listName)'.")
+            // Field mismatch — try delete+recreate
+            let (recreated, _, recreateMsg) = recreateReminder(
+                store: store, calendar: calendar, target: reminder,
+                title: title, notes: body, dueDateComponents: dueDateComponents,
+                recurrenceRules: recurrenceRule != nil ? [recurrenceRule!] : nil, priority: 0
+            )
+            var desc = "Created '\(title)' in '\(listName)'"
+            if let dueStr = dueStr { desc += " due \(dueStr)" }
+            if recurrenceRule != nil { desc += " [recurrence set]" }
+            if recreated {
+                desc += "\n(recreated \u{2014} \(mismatches.joined(separator: "; ")) didn't persist)"
+            } else {
+                desc += "\nWarning: field mismatch [\(mismatches.joined(separator: "; "))], recreate failed: \(recreateMsg)"
+            }
+            return OperationResult(success: true, message: desc)
         }
     }
 

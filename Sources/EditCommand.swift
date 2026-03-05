@@ -156,14 +156,38 @@ func executeEdit(
     }
 
     let verifyTitle = newTitle ?? target.title ?? title
+    let reminderID = target.calendarItemExternalIdentifier ?? ""
     if !skipVerify {
-        if verifyReminderExists(store: store, calendar: calendar, title: verifyTitle) {
+        var expectedFields = FieldVerification()
+        expectedFields.expectedTitle = verifyTitle
+        if let _ = dueStr {
+            expectedFields.expectedDate = target.dueDateComponents
+        }
+
+        let (passed, mismatches) = verifyFields(store: store, calendar: calendar, reminderID: reminderID, expected: expectedFields)
+        if passed {
             var msg = "Edited '\(title)' in '\(listName)':"
             for change in changes { msg += "\n  \(change)" }
-            msg += "\nVerified: edit persisted."
+            msg += "\nVerified: all fields correct."
             return OperationResult(success: true, message: msg)
         } else {
-            return OperationResult(success: false, message: "Warning: Edit was saved but verification failed.")
+            // Field mismatch — try delete+recreate
+            let (recreated, _, recreateMsg) = recreateReminder(
+                store: store, calendar: calendar, target: target,
+                title: verifyTitle,
+                notes: newBody ?? target.notes,
+                dueDateComponents: target.dueDateComponents,
+                recurrenceRules: target.recurrenceRules,
+                priority: Int(target.priority)
+            )
+            var msg = "Edited '\(title)' in '\(listName)':"
+            for change in changes { msg += "\n  \(change)" }
+            if recreated {
+                msg += "\n(recreated \u{2014} \(mismatches.joined(separator: "; ")) didn't persist)"
+            } else {
+                msg += "\nWarning: field mismatch [\(mismatches.joined(separator: "; "))], recreate failed: \(recreateMsg)"
+            }
+            return OperationResult(success: true, message: msg)
         }
     }
 

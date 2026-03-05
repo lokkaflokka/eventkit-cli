@@ -145,19 +145,44 @@ func executeMove(
         return OperationResult(success: false, message: "Error: Failed to move reminder to '\(targetListName)': \(error.localizedDescription)")
     }
 
-    // Verify: exists in target, gone from source
+    // Verify: field-level check in target + gone from source
+    let reminderID = source.calendarItemExternalIdentifier ?? ""
     if !skipVerify {
-        let inTarget = verifyReminderExists(store: store, calendar: targetCalendar, title: sourceTitle)
+        var expectedFields = FieldVerification()
+        expectedFields.expectedTitle = sourceTitle
+        if source.dueDateComponents != nil {
+            expectedFields.expectedDate = source.dueDateComponents
+        }
+
+        let (fieldsPassed, mismatches) = verifyFields(store: store, calendar: targetCalendar, reminderID: reminderID, expected: expectedFields)
         let goneFromSource = verifyReminderGone(store: store, calendar: sourceCalendar, title: sourceTitle)
-        if inTarget && goneFromSource {
+
+        if fieldsPassed && goneFromSource {
             var msg = "Moved '\(sourceTitle)' from '\(sourceListName)' to '\(targetListName)'."
             if hasRecurrence { msg += " [recurrence preserved]" }
-            msg += "\nVerified: in target, gone from source."
+            msg += "\nVerified: all fields correct, gone from source."
             return OperationResult(success: true, message: msg)
-        } else if inTarget {
-            return OperationResult(success: true, message: "Moved '\(sourceTitle)' to '\(targetListName)'. (source verification inconclusive)")
+        } else if !fieldsPassed {
+            // Field mismatch — try delete+recreate in target
+            let (recreated, _, recreateMsg) = recreateReminder(
+                store: store, calendar: targetCalendar, target: source,
+                title: sourceTitle,
+                notes: body ?? source.notes,
+                dueDateComponents: source.dueDateComponents,
+                recurrenceRules: source.recurrenceRules,
+                priority: Int(source.priority)
+            )
+            var msg = "Moved '\(sourceTitle)' from '\(sourceListName)' to '\(targetListName)'."
+            if hasRecurrence { msg += " [recurrence preserved]" }
+            if recreated {
+                msg += "\n(recreated \u{2014} \(mismatches.joined(separator: "; ")) didn't persist)"
+            } else {
+                msg += "\nWarning: field mismatch [\(mismatches.joined(separator: "; "))], recreate failed: \(recreateMsg)"
+            }
+            return OperationResult(success: true, message: msg)
         } else {
-            return OperationResult(success: false, message: "Warning: Save succeeded but verification failed \u{2014} reminder may not have moved.")
+            // Fields passed but source not gone — acceptable
+            return OperationResult(success: true, message: "Moved '\(sourceTitle)' to '\(targetListName)'. (source verification inconclusive)")
         }
     }
 
