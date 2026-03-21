@@ -1,6 +1,6 @@
 import Foundation
 
-let version = "1.3.2"
+let version = "1.3.3"
 let args = Array(CommandLine.arguments.dropFirst())
 
 guard let command = args.first else {
@@ -25,6 +25,8 @@ case "delete":
     runDelete(args: Array(args.dropFirst()))
 case "batch":
     runBatch(args: Array(args.dropFirst()))
+case "diag":
+    runDiag(args: Array(args.dropFirst()))
 case "--version":
     print("eventkit \(version)")
 case "--help", "-h":

@@ -131,6 +131,17 @@ func executeEdit(
             return OperationResult(success: false, message: "Error: Invalid date '\(dueStr)'.")
         }
         target.dueDateComponents = components
+
+        // Sync alarms to new due date — EventKit does NOT auto-update alarms
+        // when dueDateComponents changes, leaving the alarm pinned to the old
+        // date. Reminders.app uses the alarm's absoluteDate for display/sorting,
+        // so a stale alarm makes the reminder appear overdue at the old date.
+        if let alarms = target.alarms {
+            for alarm in alarms { target.removeAlarm(alarm) }
+        }
+        if let newDate = Calendar.current.date(from: components) {
+            target.addAlarm(EKAlarm(absoluteDate: newDate))
+        }
     } else if let timeStr = timeStr {
         if var existing = target.dueDateComponents {
             let timeParts = timeStr.split(separator: ":").compactMap { Int($0) }
@@ -140,6 +151,14 @@ func executeEdit(
             existing.hour = timeParts[0]
             existing.minute = timeParts[1]
             target.dueDateComponents = existing
+
+            // Sync alarm to updated time
+            if let alarms = target.alarms {
+                for alarm in alarms { target.removeAlarm(alarm) }
+            }
+            if let newDate = Calendar.current.date(from: existing) {
+                target.addAlarm(EKAlarm(absoluteDate: newDate))
+            }
         } else {
             return OperationResult(success: false, message: "Error: Cannot set time without a due date. Use --due as well.")
         }
@@ -149,19 +168,25 @@ func executeEdit(
         target.notes = newBody
     }
 
+    // Capture intended values BEFORE save — EventKit may silently revert
+    // the in-memory object after save() fails to persist (especially for
+    // overdue items), which would make post-save reads return the OLD values.
+    let intendedDate: DateComponents? = (dueStr != nil || timeStr != nil) ? target.dueDateComponents : nil
+    let intendedNotes: String? = newBody ?? target.notes
+    let verifyTitle = newTitle ?? target.title ?? title
+
     do {
         try store.save(target, commit: true)
     } catch {
         return OperationResult(success: false, message: "Error: Failed to save edit: \(error.localizedDescription)")
     }
 
-    let verifyTitle = newTitle ?? target.title ?? title
     let reminderID = target.calendarItemExternalIdentifier ?? ""
     if !skipVerify {
         var expectedFields = FieldVerification()
         expectedFields.expectedTitle = verifyTitle
-        if let _ = dueStr {
-            expectedFields.expectedDate = target.dueDateComponents
+        if dueStr != nil || timeStr != nil {
+            expectedFields.expectedDate = intendedDate
         }
 
         let (passed, mismatches) = verifyFields(store: store, calendar: calendar, reminderID: reminderID, expected: expectedFields)
@@ -175,8 +200,8 @@ func executeEdit(
             let (recreated, _, recreateMsg) = recreateReminder(
                 store: store, calendar: calendar, target: target,
                 title: verifyTitle,
-                notes: newBody ?? target.notes,
-                dueDateComponents: target.dueDateComponents,
+                notes: intendedNotes,
+                dueDateComponents: intendedDate ?? target.dueDateComponents,
                 recurrenceRules: target.recurrenceRules,
                 priority: Int(target.priority)
             )

@@ -133,6 +133,11 @@ func executeAdd(
 
     if let dueDateComponents = dueDateComponents {
         reminder.dueDateComponents = dueDateComponents
+        // Explicitly set alarm — Reminders.app uses alarm absoluteDate for
+        // display/sorting. Auto-creation is inconsistent via EventKit API.
+        if let dueDate = Calendar.current.date(from: dueDateComponents) {
+            reminder.addAlarm(EKAlarm(absoluteDate: dueDate))
+        }
     }
 
     if let rule = recurrenceRule {

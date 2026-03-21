@@ -121,6 +121,13 @@ func executeMove(
             return OperationResult(success: false, message: "Error: Invalid date '\(dueStr)'.")
         }
         source.dueDateComponents = components
+        // Sync alarm to new due date
+        if let alarms = source.alarms {
+            for alarm in alarms { source.removeAlarm(alarm) }
+        }
+        if let newDate = Calendar.current.date(from: components) {
+            source.addAlarm(EKAlarm(absoluteDate: newDate))
+        }
     } else if let timeStr = timeStr {
         if var existing = source.dueDateComponents {
             let timeParts = timeStr.split(separator: ":").compactMap { Int($0) }
@@ -130,6 +137,13 @@ func executeMove(
             existing.hour = timeParts[0]
             existing.minute = timeParts[1]
             source.dueDateComponents = existing
+            // Sync alarm to updated time
+            if let alarms = source.alarms {
+                for alarm in alarms { source.removeAlarm(alarm) }
+            }
+            if let newDate = Calendar.current.date(from: existing) {
+                source.addAlarm(EKAlarm(absoluteDate: newDate))
+            }
         } else {
             return OperationResult(success: false, message: "Error: Cannot set time without a due date. Use --due as well.")
         }

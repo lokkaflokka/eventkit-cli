@@ -316,6 +316,11 @@ func recreateReminder(
     newReminder.priority = capturedPriority
     if let due = capturedDue {
         newReminder.dueDateComponents = due
+        // Set alarm to match due date — Reminders.app uses alarm absoluteDate
+        // for display/sorting, not just dueDateComponents
+        if let dueDate = Calendar.current.date(from: due) {
+            newReminder.addAlarm(EKAlarm(absoluteDate: dueDate))
+        }
     }
     if let rules = capturedRules {
         for rule in rules {
