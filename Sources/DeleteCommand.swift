@@ -52,6 +52,7 @@ func executeDelete(
 ) -> OperationResult {
     let listName = calendar.title
     let title = target.title ?? "(untitled)"
+    let reminderID = target.calendarItemExternalIdentifier ?? ""
 
     if dryRun {
         return OperationResult(success: true, message: "DRY RUN \u{2014} would delete '\(title)' from '\(listName)'.\nNo changes saved.")
@@ -63,8 +64,8 @@ func executeDelete(
         return OperationResult(success: false, message: "Error: Failed to delete reminder: \(error.localizedDescription)")
     }
 
-    if !skipVerify {
-        if verifyReminderGone(store: store, calendar: calendar, title: title) {
+    if !skipVerify && !reminderID.isEmpty {
+        if verifyReminderGone(store: store, calendar: calendar, reminderID: reminderID) {
             return OperationResult(success: true, message: "Deleted '\(title)' from '\(listName)'.\nVerified: reminder removed.")
         } else {
             return OperationResult(success: false, message: "Warning: Delete was executed but verification failed \u{2014} reminder may still exist.")

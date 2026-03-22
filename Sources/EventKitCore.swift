@@ -366,8 +366,8 @@ func verifyReminderCompleted(store: EKEventStore, calendar: EKCalendar, title: S
     return reminders.contains { $0.title == title && $0.isCompleted }
 }
 
-/// Re-fetch and verify a reminder is gone (checks all states, not just incomplete)
-func verifyReminderGone(store: EKEventStore, calendar: EKCalendar, title: String) -> Bool {
+/// Re-fetch and verify a reminder is gone by ID (checks all states, not just incomplete)
+func verifyReminderGone(store: EKEventStore, calendar: EKCalendar, reminderID: String) -> Bool {
     let reminders = fetchReminders(store: store, in: [calendar])
-    return !reminders.contains { $0.title == title }
+    return !reminders.contains { $0.calendarItemExternalIdentifier == reminderID }
 }

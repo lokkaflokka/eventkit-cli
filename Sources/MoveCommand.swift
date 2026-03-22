@@ -169,7 +169,7 @@ func executeMove(
         }
 
         let (fieldsPassed, mismatches) = verifyFields(store: store, calendar: targetCalendar, reminderID: reminderID, expected: expectedFields)
-        let goneFromSource = verifyReminderGone(store: store, calendar: sourceCalendar, title: sourceTitle)
+        let goneFromSource = verifyReminderGone(store: store, calendar: sourceCalendar, reminderID: reminderID)
 
         if fieldsPassed && goneFromSource {
             var msg = "Moved '\(sourceTitle)' from '\(sourceListName)' to '\(targetListName)'."
