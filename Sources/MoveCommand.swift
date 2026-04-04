@@ -136,6 +136,7 @@ func executeMove(
             }
             existing.hour = timeParts[0]
             existing.minute = timeParts[1]
+            existing.timeZone = TimeZone.current
             source.dueDateComponents = existing
             // Sync alarm to updated time
             if let alarms = source.alarms {

@@ -217,7 +217,9 @@ func parseDateComponents(_ dateStr: String, time: String? = nil) -> DateComponen
     // that Apple Reminders can interpret correctly
     let calendar = Calendar.current
     guard let date = calendar.date(from: raw) else { return nil }
-    return calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+    var components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+    components.timeZone = TimeZone.current
+    return components
 }
 
 /// Format DateComponents for human-readable output (e.g., "Feb 17, 2026 at 9:00 AM")

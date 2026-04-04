@@ -150,6 +150,7 @@ func executeEdit(
             }
             existing.hour = timeParts[0]
             existing.minute = timeParts[1]
+            existing.timeZone = TimeZone.current
             target.dueDateComponents = existing
 
             // Sync alarm to updated time
