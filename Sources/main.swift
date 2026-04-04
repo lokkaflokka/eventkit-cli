@@ -27,6 +27,8 @@ case "batch":
     runBatch(args: Array(args.dropFirst()))
 case "diag":
     runDiag(args: Array(args.dropFirst()))
+case "fix-tz":
+    runFixTZ(args: Array(args.dropFirst()))
 case "--version":
     print("eventkit \(version)")
 case "--help", "-h":
@@ -54,6 +56,7 @@ func printUsage() {
       eventkit set-recurrence <list> <title> <frequency> <interval> [--id ID] [--dry-run]
       eventkit delete <list> <title> [--id ID] [--dry-run]
       eventkit batch [--file PATH] [--skip-verify] [--dry-run]
+      eventkit fix-tz [list...] [--dry-run]
       eventkit --version
 
     Aliases: 'update' = 'edit', '--notes' = '--body'

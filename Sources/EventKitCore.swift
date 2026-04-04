@@ -274,6 +274,12 @@ func verifyFields(
 
     if let expectedDate = expected.expectedDate {
         let actual = fresh.dueDateComponents
+        if let expTZ = expectedDate.timeZone {
+            let actTZ = actual?.timeZone
+            if actTZ == nil || actTZ != expTZ {
+                mismatches.append("date.timeZone: expected \(expTZ.identifier), got \(actTZ?.identifier ?? "nil")")
+            }
+        }
         let fields: [(String, (DateComponents) -> Int?)] = [
             ("year", { $0.year }), ("month", { $0.month }), ("day", { $0.day }),
             ("hour", { $0.hour }), ("minute", { $0.minute }),
@@ -316,7 +322,8 @@ func recreateReminder(
     newReminder.calendar = calendar
     newReminder.notes = capturedNotes
     newReminder.priority = capturedPriority
-    if let due = capturedDue {
+    if var due = capturedDue {
+        if due.timeZone == nil { due.timeZone = TimeZone.current }
         newReminder.dueDateComponents = due
         // Set alarm to match due date — Reminders.app uses alarm absoluteDate
         // for display/sorting, not just dueDateComponents
