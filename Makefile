@@ -1,7 +1,7 @@
 PREFIX ?= ~/.local
 BUILD_DIR = /tmp/eventkit-build
 
-.PHONY: build install uninstall clean release
+.PHONY: build install uninstall clean release setup
 
 build:
 	swift build -c release --build-path $(BUILD_DIR)
@@ -14,6 +14,10 @@ install: build
 
 uninstall:
 	rm -f $(PREFIX)/bin/eventkit
+
+setup:
+	git config core.hooksPath hooks
+	@echo "Git hooks pointed to hooks/ (committed, survives clone)"
 
 clean:
 	rm -rf $(BUILD_DIR)

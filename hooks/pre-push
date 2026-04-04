@@ -1,0 +1,11 @@
+#!/bin/sh
+# Block --tags flag. Use: git push origin vX.Y.Z (or make release V=x.y.z)
+# pre-push hook args are (remote, url), not CLI flags.
+# Detect --tags by checking parent process command line.
+
+PARENT_CMD=$(ps -o args= -p $PPID 2>/dev/null)
+if echo "$PARENT_CMD" | grep -q -- '--tags'; then
+    echo "ERROR: --tags blocked. Push individual tags: git push origin vX.Y.Z"
+    echo "Or use: make release V=x.y.z"
+    exit 1
+fi
