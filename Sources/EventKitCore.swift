@@ -179,9 +179,19 @@ func findReminderByIDOptional(in reminders: [EKReminder], id: String) -> EKRemin
 }
 
 /// Convenience: route to findReminderByID or findReminder based on which is provided.
+/// When both id and title are provided, resolves by ID but warns if title doesn't match.
 func resolveReminder(in reminders: [EKReminder], id: String?, title: String?) -> EKReminder {
     if let id = id {
-        return findReminderByID(in: reminders, id: id)
+        let reminder = findReminderByID(in: reminders, id: id)
+        if let title = title, let resolvedTitle = reminder.title {
+            let titleMatches = resolvedTitle == title ||
+                resolvedTitle.localizedCaseInsensitiveContains(title) ||
+                title.localizedCaseInsensitiveContains(resolvedTitle)
+            if !titleMatches {
+                stderrPrint("Warning: --id resolved to \"\(resolvedTitle)\" but title argument was \"\(title)\". Proceeding with ID match.")
+            }
+        }
+        return reminder
     }
     guard let title = title else {
         stderrPrint("Error: Either --id or a title must be provided.")
