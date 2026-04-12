@@ -31,7 +31,7 @@ func runDelete(args: [String]) {
     let store = getAuthorizedStore()
     let calendar = findList(store: store, name: listName)
     let reminders = fetchReminders(store: store, in: [calendar])
-    let target = resolveReminder(in: reminders, id: idFlag, title: titleArg)
+    let target = resolveReminder(in: reminders, id: idFlag, title: titleArg, includeCompleted: true)
 
     let result = executeDelete(
         store: store, calendar: calendar, target: target,
