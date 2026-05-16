@@ -251,6 +251,56 @@ func formatHumanDate(_ components: DateComponents?) -> String? {
     return formatter.string(from: date)
 }
 
+// MARK: - Body tag parsing (M1 precondition gates)
+
+/// Parse `[hw-arrives: YYYY-MM-DD]` tag from reminder notes.
+/// Returns the arrival date (start of day, local TZ) if tag is present and valid; nil otherwise.
+func parseHwArrivesDate(notes: String?) -> Date? {
+    guard let notes = notes else { return nil }
+    // Match [hw-arrives: YYYY-MM-DD] with optional whitespace
+    guard let range = notes.range(
+        of: #"\[hw-arrives:\s*(\d{4})-(\d{2})-(\d{2})\s*\]"#,
+        options: .regularExpression
+    ) else { return nil }
+    let matched = String(notes[range])
+    let parts = matched
+        .replacingOccurrences(of: "[hw-arrives:", with: "")
+        .replacingOccurrences(of: "]", with: "")
+        .trimmingCharacters(in: .whitespaces)
+        .split(separator: "-")
+        .compactMap { Int($0) }
+    guard parts.count == 3 else { return nil }
+    var comps = DateComponents()
+    comps.year = parts[0]
+    comps.month = parts[1]
+    comps.day = parts[2]
+    comps.timeZone = TimeZone.current
+    return Calendar.current.date(from: comps)
+}
+
+/// M1 precondition gate: refuse completion when [hw-arrives:] tag value is in the future.
+/// Returns nil if gate passes (no tag, tag <= today, or force=true).
+/// Returns an OperationResult with failure message if gate blocks.
+func checkHwArrivesGate(target: EKReminder, force: Bool) -> OperationResult? {
+    if force { return nil }
+    guard let arrivesDate = parseHwArrivesDate(notes: target.notes) else { return nil }
+    let today = Calendar.current.startOfDay(for: Date())
+    if arrivesDate <= today { return nil }
+
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US")
+    formatter.dateFormat = "MMM d, yyyy"
+    let arrivesStr = formatter.string(from: arrivesDate)
+    let todayStr = formatter.string(from: today)
+    let title = target.title ?? "(untitled)"
+    return OperationResult(
+        success: false,
+        message: "Refused: '\(title)' has [hw-arrives: \(arrivesStr)] which is after today (\(todayStr)). "
+            + "Hardware/dependency not yet available — completing now would be a silent-failure (see SILENT_FAILURE_SAFEGUARDS.md Instance #2). "
+            + "Pass --force (CLI) or \"force\": true (batch) to override if you're sure."
+    )
+}
+
 // MARK: - Field verification
 
 struct FieldVerification {

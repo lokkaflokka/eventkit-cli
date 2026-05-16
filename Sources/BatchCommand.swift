@@ -252,7 +252,10 @@ private func dispatchComplete(
         return BatchResult(index: index, command: "complete", title: nil, status: "error", message: "Missing 'title' or 'id'")
     }
 
-    let result = executeComplete(store: ctx.store, calendar: calendar, target: target, dryRun: dryRun, skipVerify: skipVerify)
+    let result = executeComplete(
+        store: ctx.store, calendar: calendar, target: target,
+        dryRun: dryRun, skipVerify: skipVerify, force: op.force ?? false
+    )
     ctx.invalidate(listName)
     return BatchResult(index: index, command: "complete", title: target.title, status: result.success ? "ok" : "error", message: result.message)
 }
