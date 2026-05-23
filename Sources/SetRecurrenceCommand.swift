@@ -29,10 +29,37 @@ func runSetRecurrence(args: [String]) {
     let frequencyStr: String
     let intervalStr: String
 
-    if idFlag != nil {
+    if let id = idFlag {
         // With --id: positional = [list, freq, interval]
+        // v1.7.0 pre-flight: detect ×6-recurrence shapes
+        if positional.isEmpty {
+            stderrPrint("""
+
+            ERROR: 'eventkit set-recurrence' requires <list> as the first positional argument.
+            You provided --id \(id) but no <list>, <frequency>, or <interval>.
+
+            Correct form when targeting by ID:
+              eventkit set-recurrence <list> <frequency> <interval> --id \(id)
+
+            Example:
+              eventkit set-recurrence Habits weekly 1 --id \(id)
+
+            Run 'eventkit set-recurrence --help' for full options.
+            """)
+            exit(1)
+        }
         guard positional.count >= 3 else {
-            stderrPrint("Usage: eventkit set-recurrence <list> <frequency> <interval> --id ID [--dry-run]")
+            stderrPrint("""
+
+            ERROR: 'eventkit set-recurrence' with --id requires <list> <frequency> <interval> as positional args.
+            You provided <list>='\(positional[0])' but \(positional.count - 1) of <frequency> <interval> are missing.
+
+            Correct form:
+              eventkit set-recurrence \(positional[0]) <frequency> <interval> --id \(id)
+
+            Frequency: daily, weekly, monthly, yearly
+            Interval: positive integer (1 = every period, 2 = every other)
+            """)
             exit(1)
         }
         listName = positional[0]
@@ -42,9 +69,26 @@ func runSetRecurrence(args: [String]) {
     } else {
         // Without --id: positional = [list, title, freq, interval]
         guard positional.count >= 4 else {
-            stderrPrint("Usage: eventkit set-recurrence <list> <title> <frequency> <interval> [--id ID] [--dry-run]")
-            stderrPrint("  frequency: daily, weekly, monthly, yearly")
-            stderrPrint("  interval: positive integer (1 = every period, 2 = every other)")
+            if positional.isEmpty {
+                stderrPrint("Usage: eventkit set-recurrence <list> <title> <frequency> <interval> [--id ID] [--dry-run]")
+                stderrPrint("  frequency: daily, weekly, monthly, yearly")
+                stderrPrint("  interval: positive integer (1 = every period, 2 = every other)")
+            } else {
+                let provided = positional.enumerated().map { "[\($0.offset)]='\($0.element)'" }.joined(separator: " ")
+                let missing = ["<list>", "<title>", "<frequency>", "<interval>"].suffix(4 - positional.count).joined(separator: " ")
+                stderrPrint("""
+
+                ERROR: 'eventkit set-recurrence' requires <list> <title> <frequency> <interval> (or --id <ID> with 3-arg form).
+                You provided \(provided); missing: \(missing).
+
+                Examples:
+                  eventkit set-recurrence Habits "Workout" weekly 1
+                  eventkit set-recurrence Habits weekly 1 --id ABC123    (empty title not allowed without --id; use ID form instead)
+
+                Frequency: daily, weekly, monthly, yearly
+                Interval: positive integer
+                """)
+            }
             exit(1)
         }
         listName = positional[0]

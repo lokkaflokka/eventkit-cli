@@ -502,3 +502,62 @@ func verifyReminderGone(store: EKEventStore, calendar: EKCalendar, reminderID: S
     let reminders = fetchReminders(store: store, in: [calendar])
     return !reminders.contains { $0.calendarItemExternalIdentifier == reminderID }
 }
+
+// MARK: - Pre-flight argument-shape error helpers (v1.7.0, S275)
+//
+// The ×6-recurrence failure mode caught by the TECHNICAL_GOTCHAS entry: callers
+// invoke write subcommands with --id but no positional <list>, then re-emit the
+// same error pattern on retry because the generic "Usage: ..." line doesn't
+// teach the empty-title-with-id form. These helpers detect the specific shape
+// and emit an instructive error referencing the user's own --id value.
+
+/// Emit a specific error when --id is provided but the required positional
+/// <list> argument is missing. Returns true if an error was emitted (caller
+/// should exit(1)). Subcommands with --id support: complete, edit, delete,
+/// move (note: Move has a different positional shape — uses its own message).
+func reportMissingListWithIdError(subcommand: String, idFlag: String?) -> Bool {
+    guard let id = idFlag else { return false }
+    stderrPrint("""
+
+    ERROR: 'eventkit \(subcommand)' requires <list> as the first positional argument.
+    You provided --id \(id) but no <list>.
+
+    Correct forms when targeting by ID:
+      eventkit \(subcommand) Strategic ""              --id \(id)    (empty title is OK with --id)
+      eventkit \(subcommand) <list> "Item title"                     (title alone)
+      eventkit \(subcommand) <list> "Item title" --id \(id)          (--id disambiguates)
+
+    Run 'eventkit \(subcommand) --help' for full options.
+    """)
+    return true
+}
+
+/// Emit a specific error when <list> is present but <title> is missing and no
+/// --id was provided. Returns true if an error was emitted.
+func reportMissingTitleError(subcommand: String, listName: String, supportsId: Bool) -> Bool {
+    if supportsId {
+        stderrPrint("""
+
+        ERROR: 'eventkit \(subcommand)' requires <title> as the second positional argument (or --id <ID>).
+        You provided <list>='\(listName)' but no <title> and no --id.
+
+        Examples:
+          eventkit \(subcommand) \(listName) "Item title"
+          eventkit \(subcommand) \(listName) "" --id ABC123    (empty title is OK with --id)
+
+        Run 'eventkit \(subcommand) --help' for full options.
+        """)
+    } else {
+        stderrPrint("""
+
+        ERROR: 'eventkit \(subcommand)' requires <title> as the second positional argument.
+        You provided <list>='\(listName)' but no <title>.
+
+        Example:
+          eventkit \(subcommand) \(listName) "Item title"
+
+        Run 'eventkit \(subcommand) --help' for full options.
+        """)
+    }
+    return true
+}

@@ -19,8 +19,16 @@ func runDelete(args: [String]) {
     let positional = positionalArgs(from: args, valueFlags: ["--id"], boolFlags: ["--dry-run"])
     let idFlag = extractFlag("--id", from: args)
 
-    guard positional.count >= 2 || (positional.count >= 1 && idFlag != nil) else {
+    // v1.7.0 pre-flight: detect the ×6-recurrence failure shapes
+    if positional.isEmpty {
+        if reportMissingListWithIdError(subcommand: "delete", idFlag: idFlag) {
+            exit(1)
+        }
         stderrPrint("Usage: eventkit delete <list> <title> [--id ID] [--dry-run]")
+        exit(1)
+    }
+    if positional.count < 2 && idFlag == nil {
+        _ = reportMissingTitleError(subcommand: "delete", listName: positional[0], supportsId: true)
         exit(1)
     }
 

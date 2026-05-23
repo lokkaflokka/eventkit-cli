@@ -30,8 +30,39 @@ func runMove(args: [String]) {
     )
     let idFlag = extractFlag("--id", from: args)
 
-    guard positional.count >= 3 || (positional.count >= 2 && idFlag != nil) else {
+    // v1.7.0 pre-flight: Move uses a 3-positional shape (<source> <target> <title>)
+    // so detection is specific to it rather than the shared helper.
+    if positional.count < 2 {
+        if let id = idFlag {
+            stderrPrint("""
+
+            ERROR: 'eventkit move' requires <source-list> <target-list> as the first two positional arguments.
+            You provided --id \(id) but \(positional.isEmpty ? "no positional args" : "only <source-list>='\(positional[0])'").
+
+            Correct forms when targeting by ID:
+              eventkit move Inbox Personal ""              --id \(id)    (empty title is OK with --id)
+              eventkit move Inbox Personal "Item title"                  (title alone)
+              eventkit move Inbox Personal "Item title" --id \(id)       (--id disambiguates)
+
+            Run 'eventkit move --help' for full options.
+            """)
+            exit(1)
+        }
         stderrPrint("Usage: eventkit move <source-list> <target-list> <title> [--id ID] [--due YYYY-MM-DD] [--time HH:MM] [--body TEXT | --notes TEXT | --body-file PATH] [--dry-run]")
+        exit(1)
+    }
+    if positional.count < 3 && idFlag == nil {
+        stderrPrint("""
+
+        ERROR: 'eventkit move' requires <title> as third positional argument (or --id <ID>).
+        You provided <source-list>='\(positional[0])' <target-list>='\(positional[1])' but no <title>.
+
+        Examples:
+          eventkit move \(positional[0]) \(positional[1]) "Item title"
+          eventkit move \(positional[0]) \(positional[1]) "" --id ABC123    (empty title is OK with --id)
+
+        Run 'eventkit move --help' for full options.
+        """)
         exit(1)
     }
 

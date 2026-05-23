@@ -33,8 +33,23 @@ func runAdd(args: [String]) {
         boolFlags: ["--dry-run", "--force"]
     )
 
-    guard positional.count >= 2 else {
-        stderrPrint("Usage: eventkit add <list> <title> [--due YYYY-MM-DD] [--time HH:MM] [--body TEXT | --notes TEXT | --body-file PATH] [--recurrence FREQ] [--interval N] [--force] [--dry-run]")
+    // v1.7.0 pre-flight: detect specific failure shapes
+    if positional.isEmpty {
+        stderrPrint("""
+
+        ERROR: 'eventkit add' requires <list> <title> as positional arguments.
+        (eventkit add does not support --id; it creates a new reminder.)
+
+        Examples:
+          eventkit add Strategic "Item title" --due 2026-05-25
+          eventkit add Personal  "Errand"     --due 2026-05-24 --time 17:00
+
+        Run 'eventkit add --help' for full options.
+        """)
+        exit(1)
+    }
+    if positional.count < 2 {
+        _ = reportMissingTitleError(subcommand: "add", listName: positional[0], supportsId: false)
         exit(1)
     }
 
