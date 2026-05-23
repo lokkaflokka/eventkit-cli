@@ -16,7 +16,6 @@ func runComplete(args: [String]) {
 
         Precondition gate: if the reminder's body contains [hw-arrives: YYYY-MM-DD]
         and that date is after today, completion is refused unless --force is given.
-        See SILENT_FAILURE_SAFEGUARDS.md (Instance #2, adoption #2).
         """)
         exit(0)
     }

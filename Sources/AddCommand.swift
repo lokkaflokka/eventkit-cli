@@ -14,9 +14,15 @@ func runAdd(args: [String]) {
           --body-file PATH       Read body from file
           --recurrence FREQ      Recurrence: daily, weekly, monthly, yearly
           --interval N           Recurrence interval (default 1)
-          --force                Create even if duplicate exists
+          --force                Create even if duplicate exists; bypass chain-tag gate
           --dry-run              Preview without saving
           --help, -h             Show this help
+
+        Chain-tag gate (Personal list only): if title matches trigger pattern
+        (check|decide|review|verify|investigate|RSVP|confirm) and body has no
+        [chain-on-complete:] or [chain-terminal:] tag, creation is refused unless
+        --force is given.
+        Negation: 'Check in' / 'Check-in' prefix titles skip (recurring social check-ins).
         """)
         exit(0)
     }
@@ -84,6 +90,12 @@ func executeAdd(
         if reminders.contains(where: { $0.title == title && !$0.isCompleted }) {
             return OperationResult(success: true, message: "SKIP (exists): '\(title)' already exists incomplete in '\(listName)'. Use --force to override.")
         }
+    }
+
+    // Chain-tag precondition gate: refuse trigger-verb Personals without a chain tag.
+    // Mirrors executeComplete's [hw-arrives:] gate.
+    if let blocked = checkChainTagGate(listName: listName, title: title, notes: body, force: force) {
+        return blocked
     }
 
     // Parse due date components

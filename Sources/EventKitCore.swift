@@ -296,8 +296,67 @@ func checkHwArrivesGate(target: EKReminder, force: Bool) -> OperationResult? {
     return OperationResult(
         success: false,
         message: "Refused: '\(title)' has [hw-arrives: \(arrivesStr)] which is after today (\(todayStr)). "
-            + "Hardware/dependency not yet available — completing now would be a silent-failure (see SILENT_FAILURE_SAFEGUARDS.md Instance #2). "
+            + "Hardware/dependency not yet available — completing now would be a silent-failure. "
             + "Pass --force (CLI) or \"force\": true (batch) to override if you're sure."
+    )
+}
+
+// MARK: - Chain-on-Complete tag gate (CREATE-time precondition)
+//
+// Refuses creation of trigger-verb-titled Personal reminders that don't declare
+// a successor ([chain-on-complete: {...}]) or an explicit terminal marker
+// ([chain-terminal: <reason>]). Pairs with a downstream detector that scans
+// completed reminders for the same pattern; the regexes here mirror that
+// detector so CREATE-side and DETECT-side semantics stay consistent.
+
+/// True when title contains a trigger verb (anywhere, word-boundary, case-insensitive),
+/// excluding the "Check in" / "Check-in" prefix negation (recurring social check-ins).
+func matchesChainTriggerVerb(title: String) -> Bool {
+    // Negation: gather-script NEG_RE r"^\s*check[- ]in\b" with re.I
+    if title.range(
+        of: #"^\s*check[- ]in\b"#,
+        options: [.regularExpression, .caseInsensitive]
+    ) != nil {
+        return false
+    }
+    // Trigger pattern: gather-script TRIGGER_RE r"\b(check|decide|review|verify|investigate|RSVP|confirm)\b" with re.I
+    return title.range(
+        of: #"\b(check|decide|review|verify|investigate|RSVP|confirm)\b"#,
+        options: [.regularExpression, .caseInsensitive]
+    ) != nil
+}
+
+/// True when reminder body contains either [chain-on-complete:] or [chain-terminal:] tag.
+/// Mirrors gather-script TAG_RE (case-sensitive on chain-on-complete) and TERMINAL_RE (case-insensitive).
+func bodyHasChainTag(notes: String?) -> Bool {
+    guard let notes = notes, !notes.isEmpty else { return false }
+    if notes.range(of: #"\[chain-on-complete:"#, options: .regularExpression) != nil {
+        return true
+    }
+    if notes.range(of: #"\[chain-terminal\b"#, options: [.regularExpression, .caseInsensitive]) != nil {
+        return true
+    }
+    return false
+}
+
+/// Precondition gate: refuse `eventkit add` to the Personal list when title matches
+/// the chain-trigger-verb pattern but body has neither [chain-on-complete:] nor
+/// [chain-terminal:] tag.
+/// Scope: list named "Personal" only. Negation: "Check in" / "Check-in" prefix titles skip.
+/// Returns nil if gate passes (non-Personal list, no trigger verb, has chain tag, or force=true).
+/// Returns an OperationResult with failure message if gate blocks.
+func checkChainTagGate(listName: String, title: String, notes: String?, force: Bool) -> OperationResult? {
+    if force { return nil }
+    if listName != "Personal" { return nil }
+    if !matchesChainTriggerVerb(title: title) { return nil }
+    if bodyHasChainTag(notes: notes) { return nil }
+    return OperationResult(
+        success: false,
+        message: "Refused: '\(title)' has trigger-verb title (check|decide|review|verify|investigate|RSVP|confirm) but body has no [chain-on-complete:] or [chain-terminal:] tag. "
+            + "Without a chain tag, this becomes a chain gap at completion. "
+            + "Add [chain-on-complete: {\"title\":\"...\",\"due\":\"YYYY-MM-DD\"}] for a successor, "
+            + "[chain-terminal: <reason>] if genuinely terminal, "
+            + "or pass --force (CLI) / \"force\": true (batch) to bypass."
     )
 }
 
