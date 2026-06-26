@@ -59,6 +59,8 @@ eventkit list "My List" --due-before 2026-02-23 --due-after 2026-02-16  # date r
 eventkit add "My List" "Buy groceries"
 eventkit add "My List" "File taxes" --due 2026-03-15 --notes "Federal + state"
 eventkit add "My List" "Weekly review" --due 2026-02-22 --time 10:00 --body-file notes.txt
+eventkit add "My List" "Deadline" --due 2026-06-27T13:00:00Z   # ISO-8601 datetime also accepted (UTC→local)
+eventkit add Personal "Review Q3 plan" --chain-terminal        # terminal trigger-verb item; satisfies the chain gate without --force
 eventkit add "My List" "Buy groceries" --dry-run  # preview only
 
 # Complete a reminder

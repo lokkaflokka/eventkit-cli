@@ -207,6 +207,30 @@ func resolveReminder(in reminders: [EKReminder], id: String?, title: String?, in
 
 /// Parse YYYY-MM-DD + optional HH:MM into DateComponents (component-based, no DateFormatter)
 func parseDateComponents(_ dateStr: String, time: String? = nil) -> DateComponents? {
+    // ISO-8601 datetime unify (v1.8.0): accept full timestamps like
+    // "2026-06-27T13:00:00Z" (or with a numeric offset) so callers can pass the
+    // same ISO strings eventkit itself emits — Reminders dueDates are stored UTC,
+    // and strategic_due_detail / gather feed ISO. The 'T' marks the datetime form.
+    // The Z/offset is resolved to a Date, then read back as LOCAL wall-clock
+    // components, so "13:00:00Z" lands as 09:00 EDT — identical round-trip to the
+    // YYYY-MM-DD path below. An explicit ISO time is self-contained, so a separate
+    // `time:` argument is ignored when an ISO datetime is supplied.
+    if dateStr.contains("T") {
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime]
+        var resolved = isoFormatter.date(from: dateStr)
+        if resolved == nil {
+            // Retry allowing fractional seconds (e.g. "...13:00:00.000Z").
+            isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            resolved = isoFormatter.date(from: dateStr)
+        }
+        guard let date = resolved else { return nil }
+        let calendar = Calendar.current
+        var components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+        components.timeZone = TimeZone.current
+        return components
+    }
+
     let parts = dateStr.split(separator: "-").compactMap { Int($0) }
     guard parts.count == 3 else { return nil }
 

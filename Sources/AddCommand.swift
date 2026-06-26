@@ -14,6 +14,9 @@ func runAdd(args: [String]) {
           --body-file PATH       Read body from file
           --recurrence FREQ      Recurrence: daily, weekly, monthly, yearly
           --interval N           Recurrence interval (default 1)
+          --chain-terminal       Mark as a terminal trigger-verb item: appends a
+                                 [chain-terminal:] tag so the chain-tag gate passes
+                                 without --force (keeps the dedup check intact).
           --force                Create even if duplicate exists; bypass chain-tag gate
           --dry-run              Preview without saving
           --help, -h             Show this help
@@ -21,7 +24,8 @@ func runAdd(args: [String]) {
         Chain-tag gate (Personal list only): if title matches trigger pattern
         (check|decide|review|verify|investigate|RSVP|confirm) and body has no
         [chain-on-complete:] or [chain-terminal:] tag, creation is refused unless
-        --force is given.
+        --force is given. For a genuinely terminal item, prefer --chain-terminal
+        over --force: it satisfies the gate (tag present) while still deduping.
         Negation: 'Check in' / 'Check-in' prefix titles skip (recurring social check-ins).
         """)
         exit(0)
@@ -30,7 +34,7 @@ func runAdd(args: [String]) {
     let positional = positionalArgs(
         from: args,
         valueFlags: ["--due", "--time", "--body", "--notes", "--body-file", "--recurrence", "--interval"],
-        boolFlags: ["--dry-run", "--force"]
+        boolFlags: ["--dry-run", "--force", "--chain-terminal"]
     )
 
     // v1.7.0 pre-flight: detect specific failure shapes
@@ -72,6 +76,20 @@ func runAdd(args: [String]) {
     let intervalStr = extractFlag("--interval", from: args)
     let dryRun = hasFlag("--dry-run", in: args)
     let force = hasFlag("--force", in: args)
+    let chainTerminal = hasFlag("--chain-terminal", in: args)
+
+    // --chain-terminal: append a [chain-terminal:] tag so a trigger-verb Personal
+    // passes the chain-tag gate as terminal, without --force (which also bypasses
+    // dedup). Idempotent — skip if the body already carries any chain tag.
+    var effectiveBody = body
+    if chainTerminal && !bodyHasChainTag(notes: effectiveBody) {
+        let tag = "[chain-terminal: marked terminal via --chain-terminal]"
+        if let existing = effectiveBody, !existing.isEmpty {
+            effectiveBody = existing + "\n" + tag
+        } else {
+            effectiveBody = tag
+        }
+    }
 
     let store = getAuthorizedStore()
     let calendar = findList(store: store, name: listName)
@@ -79,7 +97,7 @@ func runAdd(args: [String]) {
 
     let result = executeAdd(
         store: store, calendar: calendar, reminders: reminders,
-        title: title, dueStr: dueStr, timeStr: timeStr, body: body,
+        title: title, dueStr: dueStr, timeStr: timeStr, body: effectiveBody,
         recurrenceStr: recurrenceStr, intervalStr: intervalStr,
         force: force, dryRun: dryRun, skipVerify: false
     )
