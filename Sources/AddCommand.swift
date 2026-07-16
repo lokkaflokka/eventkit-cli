@@ -156,6 +156,12 @@ func executeAdd(
         recurrenceRule = EKRecurrenceRule(recurrenceWith: freq, interval: interval, end: nil)
     }
 
+    // S403 (queue #48): recurring + [chain-on-complete:] is an annual mis-fire
+    // time bomb — refuse before dry-run so previews report it too.
+    if recurrenceRule != nil && bodyHasChainOnComplete(notes: body) {
+        return chainOnRecurringRefusal("add --recurrence")
+    }
+
     if dryRun {
         var desc = "DRY RUN \u{2014} would create '\(title)' in '\(listName)'"
         if let dueStr = dueStr {

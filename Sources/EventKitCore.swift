@@ -363,6 +363,29 @@ func bodyHasChainTag(notes: String?) -> Bool {
     return false
 }
 
+/// True when body carries a [chain-on-complete:] tag specifically ([chain-terminal:]
+/// is safe on recurring items — it never fires anything).
+func bodyHasChainOnComplete(notes: String?) -> Bool {
+    guard let notes = notes, !notes.isEmpty else { return false }
+    return notes.range(of: #"\[chain-on-complete:"#, options: .regularExpression) != nil
+}
+
+/// S403 refusal (SYSTEM_ROADMAP "recurring + chain-tag annual mis-fire", queue #48):
+/// completing a recurring reminder makes EventKit advance the due date AND copy the
+/// body verbatim — including a hardcoded [chain-on-complete: due: ...] date — into
+/// the next occurrence, so next cycle's completion re-fires the chain with a
+/// past-due successor (live instance: the Father's Day annual, 2026-06). Refuse the
+/// combination at every write surface; per-instance tagging is the pattern.
+func chainOnRecurringRefusal(_ context: String) -> OperationResult {
+    return OperationResult(
+        success: false,
+        message: "Refused (\(context)): [chain-on-complete:] on a RECURRING reminder. "
+            + "EventKit copies the body verbatim to the next occurrence on completion, so the hardcoded chain date re-fires next cycle as a past-due successor. "
+            + "Instead: (a) tag THIS occurrence only when it becomes current and strip at completion (per-instance pattern), "
+            + "(b) use [chain-terminal:] if it shouldn't chain, or (c) drop the recurrence and let chain successors carry the cadence."
+    )
+}
+
 /// Precondition gate: refuse `eventkit add` to the Personal list when title matches
 /// the chain-trigger-verb pattern but body has neither [chain-on-complete:] nor
 /// [chain-terminal:] tag.

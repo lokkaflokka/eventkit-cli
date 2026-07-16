@@ -174,6 +174,13 @@ func executeEdit(
     }
 
     if let newBody = newBody {
+        // S403 (queue #48): refuse writing a [chain-on-complete:] tag onto a
+        // recurring item — the body (and its hardcoded chain date) is copied to
+        // the next occurrence at completion.
+        if bodyHasChainOnComplete(notes: newBody),
+           let rules = target.recurrenceRules, !rules.isEmpty {
+            return chainOnRecurringRefusal("edit --body on recurring item")
+        }
         target.notes = newBody
     }
 

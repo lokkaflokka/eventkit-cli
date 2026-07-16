@@ -124,6 +124,14 @@ func runSetRecurrence(args: [String]) {
         exit(6)
     }
 
+    // S403 (queue #48): refuse adding recurrence to an item whose body carries
+    // [chain-on-complete:] — completion would copy the hardcoded chain date to
+    // every future occurrence.
+    if bodyHasChainOnComplete(notes: target.notes) {
+        stderrPrint(chainOnRecurringRefusal("set-recurrence on chain-tagged item").message)
+        exit(6)
+    }
+
     let result = executeSetRecurrence(
         store: store, calendar: calendar, target: target,
         frequencyStr: frequencyStr, frequency: frequency, interval: interval,
