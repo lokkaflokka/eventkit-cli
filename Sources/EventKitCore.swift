@@ -216,6 +216,17 @@ func parseDateComponents(_ dateStr: String, time: String? = nil) -> DateComponen
     // YYYY-MM-DD path below. An explicit ISO time is self-contained, so a separate
     // `time:` argument is ignored when an ISO datetime is supplied.
     if dateStr.contains("T") {
+        // ISO8601DateFormatter silently rolls day-overflow over (it accepts
+        // "2026-02-30T09:00:00Z" and yields Mar 2), so validate the calendar-date
+        // portion strictly first — same no-silent-failure contract as the
+        // YYYY-MM-DD path below. Reject invalid days instead of shifting them.
+        let datePortion = dateStr.split(separator: "T", maxSplits: 1).first.map(String.init) ?? ""
+        let dParts = datePortion.split(separator: "-").compactMap { Int($0) }
+        guard dParts.count == 3 else { return nil }
+        var dateCheck = DateComponents()
+        dateCheck.year = dParts[0]; dateCheck.month = dParts[1]; dateCheck.day = dParts[2]
+        guard dateCheck.isValidDate(in: Calendar(identifier: .gregorian)) else { return nil }
+
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime]
         var resolved = isoFormatter.date(from: dateStr)
@@ -250,9 +261,16 @@ func parseDateComponents(_ dateStr: String, time: String? = nil) -> DateComponen
     raw.minute = timeParts[1]
     raw.second = 0
 
+    // Reject out-of-range dates/times instead of letting Calendar silently
+    // normalize them (2026-02-30 -> Mar 2, 25:99 -> next-day 02:39). Core
+    // no-silent-failure contract: a typo'd due date must fail loudly, not
+    // land a reminder on the wrong day that post-save verification then
+    // "confirms" (verification compares against these same components).
+    let calendar = Calendar.current
+    guard raw.isValidDate(in: calendar) else { return nil }
+
     // Roundtrip through Calendar to produce properly-contextualized components
     // that Apple Reminders can interpret correctly
-    let calendar = Calendar.current
     guard let date = calendar.date(from: raw) else { return nil }
     var components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
     components.timeZone = TimeZone.current
