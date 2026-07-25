@@ -205,6 +205,34 @@ func resolveReminder(in reminders: [EKReminder], id: String?, title: String?, in
 
 // MARK: - Date helpers
 
+/// Split `s` on `separator` into exactly `expected` integer components, or nil.
+///
+/// Deliberately stricter than `split(...).compactMap { Int($0) }`, which silently
+/// DROPS components instead of rejecting them and so mis-tokenizes typos into
+/// valid-looking dates:
+///   - "2026-02--5" -> split omits the empty component -> [2026, 2, 5] -> Feb 5
+///   - "2026-02-"   -> Int("") is nil, compactMap drops it -> [2026, 2] (count check
+///                     then fires, but only by luck of arity)
+///   - "2026-02-+5" -> Int("+5") == 5 -> Feb 5
+/// The v1.8.1 isValidDate guard could not catch these: by the time it ran, the
+/// components were already a legitimate date. Value validation cannot fix a
+/// tokenizer that discards evidence — so reject empty and non-ASCII-digit
+/// components up front, before any Int conversion.
+func strictIntParts(_ s: String, separator: Character, expected: Int) -> [Int]? {
+    let raw = s.split(separator: separator, omittingEmptySubsequences: false)
+    guard raw.count == expected else { return nil }
+
+    var out: [Int] = []
+    out.reserveCapacity(expected)
+    for part in raw {
+        guard !part.isEmpty,
+              part.allSatisfy({ $0.isASCII && $0.isNumber }),
+              let value = Int(part) else { return nil }
+        out.append(value)
+    }
+    return out
+}
+
 /// Parse YYYY-MM-DD + optional HH:MM into DateComponents (component-based, no DateFormatter)
 func parseDateComponents(_ dateStr: String, time: String? = nil) -> DateComponents? {
     // ISO-8601 datetime unify (v1.8.0): accept full timestamps like
@@ -221,8 +249,7 @@ func parseDateComponents(_ dateStr: String, time: String? = nil) -> DateComponen
         // portion strictly first — same no-silent-failure contract as the
         // YYYY-MM-DD path below. Reject invalid days instead of shifting them.
         let datePortion = dateStr.split(separator: "T", maxSplits: 1).first.map(String.init) ?? ""
-        let dParts = datePortion.split(separator: "-").compactMap { Int($0) }
-        guard dParts.count == 3 else { return nil }
+        guard let dParts = strictIntParts(datePortion, separator: "-", expected: 3) else { return nil }
         var dateCheck = DateComponents()
         dateCheck.year = dParts[0]; dateCheck.month = dParts[1]; dateCheck.day = dParts[2]
         guard dateCheck.isValidDate(in: Calendar(identifier: .gregorian)) else { return nil }
@@ -242,13 +269,12 @@ func parseDateComponents(_ dateStr: String, time: String? = nil) -> DateComponen
         return components
     }
 
-    let parts = dateStr.split(separator: "-").compactMap { Int($0) }
-    guard parts.count == 3 else { return nil }
+    guard let parts = strictIntParts(dateStr, separator: "-", expected: 3) else { return nil }
 
     let timeParts: [Int]
     if let time = time {
-        timeParts = time.split(separator: ":").compactMap { Int($0) }
-        guard timeParts.count == 2 else { return nil }
+        guard let parsed = strictIntParts(time, separator: ":", expected: 2) else { return nil }
+        timeParts = parsed
     } else {
         timeParts = [9, 0]
     }
