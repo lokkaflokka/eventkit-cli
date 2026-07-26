@@ -138,12 +138,14 @@ Flags: `--skip-verify` (skip re-fetch verification), `--dry-run`, `--file PATH`
 [
   {
     "dueDate": "2026-02-22T15:00:00Z",
+    "hasRecurrence": true,
     "id": "ABC123-...",
     "isCompleted": false,
     "listID": "DEF456-...",
     "listName": "My List",
     "notes": "Some notes here",
     "priority": "none",
+    "recurrence": "weekly",
     "title": "Weekly review"
   }
 ]
@@ -153,6 +155,8 @@ Flags: `--skip-verify` (skip re-fetch verification), `--dry-run`, `--file PATH`
 - `completionDate`: Only present on completed items (requires `--completed` flag).
 - `notes`: Omitted when empty.
 - `priority`: `"none"`, `"high"`, `"medium"`, or `"low"`.
+- `hasRecurrence`: Always present. `true` when the reminder has native recurrence rules.
+- `recurrence`: Only present when `hasRecurrence` is `true`. Rule summary using the `set-recurrence` vocabulary: `"weekly"`, `"monthly interval=2"`; multiple rules joined with `"; "`.
 
 ### Batch Output
 

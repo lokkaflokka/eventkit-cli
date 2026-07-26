@@ -424,7 +424,9 @@ private func dispatchDelete(
     // Resolve target
     let target: EKReminder
     if let id = op.id {
-        guard let r = findReminderByIDOptional(in: reminders, id: id) else {
+        // includeCompleted for parity with single `delete --id` — ids are unambiguous,
+        // and completed-item purges are the main batch-delete consumer.
+        guard let r = findReminderByIDOptional(in: reminders, id: id, includeCompleted: true) else {
             return BatchResult(index: index, command: "delete", title: op.title, status: "error", message: "No reminder with id '\(id)'")
         }
         target = r
