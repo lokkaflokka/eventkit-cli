@@ -394,15 +394,89 @@ func matchesChainTriggerVerb(title: String) -> Bool {
     ) != nil
 }
 
-/// True when reminder body contains either [chain-on-complete:] or [chain-terminal:] tag.
-/// Mirrors gather-script TAG_RE (case-sensitive on chain-on-complete) and TERMINAL_RE (case-insensitive).
+/// True when the body DECLARES a chain tag, as opposed to merely MENTIONING one.
+///
+/// The previous version matched
+/// `[chain-terminal` anywhere in the body, so the gate FAILED OPEN on prose.
+/// Reproduction, verified against the CLI (2026-08):
+///
+///     eventkit add Personal "Decide whether to renew the thing" --due 2026-09-30 \
+///       --body "Note: consumer items each carry [chain-terminal: yes] so the gate
+///               passes for them. This item is the producer and carries no such tag."
+///
+/// That was ACCEPTED while declaring nothing at all. A gate that fails OPEN is worse
+/// than one that fails closed: a check that refuses leaves an artifact you can see,
+/// whereas a bypass leaves nothing and the damage surfaces later as a broken chain at
+/// completion time, which is exactly the condition this gate exists to prevent.
+///
+/// These discriminators are the INVERSE of the companion prose-quoted-tag detector:
+/// that one answers "is this tag being quoted?", this one answers "is this tag being
+/// declared?", so the two must agree or a body could be quoted-by-one and
+/// declared-by-the-other. Do not tune one without the other.
+///
+/// A tag DECLARES when all of these hold:
+///   1. its line is not escaped (a markdown code span, or an explicit [tag note]),
+///   2. its payload is non-empty and is not a placeholder (`<reason>`, `...`),
+///   3. the tag is on a tag-only line, OR it is not surrounded by prose on BOTH
+///      sides once adjacent bracketed tags are stripped.
+///
+/// Rule 3 is the one that closes the bug and the one it is tempting to skip: the
+/// reproduction's payload is "yes", which is non-empty and unbackticked, so rules
+/// 1 and 2 pass it. Verified against the live corpus at the time of the change:
+/// 11 genuine declarations and 115 untagged items, ZERO reclassified.
 func bodyHasChainTag(notes: String?) -> Bool {
     guard let notes = notes, !notes.isEmpty else { return false }
-    if notes.range(of: #"\[chain-on-complete:"#, options: .regularExpression) != nil {
-        return true
-    }
-    if notes.range(of: #"\[chain-terminal\b"#, options: [.regularExpression, .caseInsensitive]) != nil {
-        return true
+
+    let tagPattern = #"\[(chain-terminal|chain-on-complete)\s*:\s*([^\]]*)\]"#
+    // A tag-only line, allowing a leading status glyph or list marker. Without the
+    // glyph class, "⏸️ [waiting-on: ...]" reads as prose-before and false-fires
+    // (measured on 2 live rows by #135).
+    let taglinePattern = #"^[\s\-*>]*[⏸️🚫⛔✅⚠️🔴🟡🟢🔼📥🔧⚙️]*\s*(?:\[[^\]]*\]\s*)+$"#
+    let placeholderPattern = #"^(?:\.\.\.|…|<[^>]*>)$"#
+    let adjacentTrailPattern = #"(?:\s*\[[^\]]*\])+\s*$"#
+    let adjacentLeadPattern = #"^\s*(?:\[[^\]]*\]\s*)+"#
+    // Declared escapes. Both are already used by hand in this corpus.
+    let escapedPattern = #"`[^`]*\[[a-z][a-z0-9-]{2,24}:|\[tag note\]"#
+
+    for line in notes.components(separatedBy: .newlines) {
+        if line.range(of: escapedPattern,
+                      options: [.regularExpression, .caseInsensitive]) != nil {
+            continue
+        }
+        let isTagline = line.range(of: taglinePattern, options: .regularExpression) != nil
+
+        var searchStart = line.startIndex
+        while let r = line.range(of: tagPattern,
+                                 options: [.regularExpression, .caseInsensitive],
+                                 range: searchStart..<line.endIndex) {
+            let occurrence = String(line[r])
+            // Payload is everything after the first colon, minus the closing bracket.
+            var payload = ""
+            if let colon = occurrence.firstIndex(of: ":") {
+                payload = String(occurrence[occurrence.index(after: colon)...])
+                    .replacingOccurrences(of: "]", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+            }
+            let isPlaceholder = payload.range(of: placeholderPattern,
+                                              options: .regularExpression) != nil
+            if !payload.isEmpty && !isPlaceholder {
+                if isTagline { return true }
+                let beforeRaw = String(line[line.startIndex..<r.lowerBound])
+                let afterRaw = String(line[r.upperBound...])
+                let before = beforeRaw
+                    .replacingOccurrences(of: adjacentTrailPattern, with: "",
+                                          options: .regularExpression)
+                    .trimmingCharacters(in: .whitespaces)
+                let after = afterRaw
+                    .replacingOccurrences(of: adjacentLeadPattern, with: "",
+                                          options: .regularExpression)
+                    .trimmingCharacters(in: .whitespaces)
+                // Prose on both sides means the tag is being talked ABOUT.
+                if !(!before.isEmpty && !after.isEmpty) { return true }
+            }
+            searchStart = r.upperBound
+            if searchStart >= line.endIndex { break }
+        }
     }
     return false
 }

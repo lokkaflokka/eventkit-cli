@@ -39,6 +39,12 @@ run_suite date-parsing \
     "$REPO/Sources/EventKitCore.swift" \
     "$REPO/tests/date-parsing/main.swift"
 
+# The chain-tag gate failed OPEN on a prose-quoted tag. Compiled against the
+# shipping EventKitCore.swift, so it tests the real predicate.
+run_suite chain-tag-gate \
+    "$REPO/Sources/EventKitCore.swift" \
+    "$REPO/tests/chain-tag-gate/main.swift"
+
 if [ "$fails" -ne 0 ]; then
     echo "FAILED: $fails suite(s)"
     exit 1
